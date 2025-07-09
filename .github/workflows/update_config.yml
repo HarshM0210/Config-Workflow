@@ -9,12 +9,11 @@ on:
         type: string
 
 jobs:
-  generate-ui:
+  prepare-inputs:
     runs-on: ubuntu-latest
     outputs:
-      config_options: ${{ steps.set-outputs.outputs.config_options }}
-      config_comments: ${{ steps.set-outputs.outputs.config_comments }}
       config_path: ${{ steps.set-outputs.outputs.config_path }}
+      case_code: ${{ steps.set-outputs.outputs.case_code }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,77 +29,84 @@ jobs:
           fi
 
           CONFIG_PATH=$(cat "$CACHE_DIR/config_path.txt")
-          CONFIG_OPTIONS=$(cat "$CACHE_DIR/config_options.json")
-          CONFIG_COMMENTS=$(cat "$CACHE_DIR/config_comments.txt" | jq -R -s -c 'split("\n")')
 
-          echo "config_options=$CONFIG_OPTIONS" >> $GITHUB_OUTPUT
-          echo "config_comments=$CONFIG_COMMENTS" >> $GITHUB_OUTPUT
           echo "config_path=$CONFIG_PATH" >> $GITHUB_OUTPUT
+          echo "case_code=$CASE_CODE" >> $GITHUB_OUTPUT
+          echo "CONFIG_PATH=$CONFIG_PATH" >> $GITHUB_ENV
           echo "CASE_CODE=$CASE_CODE" >> $GITHUB_ENV
 
-  update-config:
+  generate-ui:
+    needs: prepare-inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create UI instructions
+        run: |
+          echo "##[group]Configuration Update Instructions"
+          echo "Too many configuration options to display in GitHub UI (64 options found)."
+          echo "Please edit the following file directly in your repository:"
+          echo "${{ needs.prepare-inputs.outputs.config_path }}"
+          echo ""
+          echo "After making changes, commit them and they will be used in the next steps."
+          echo "##[endgroup]"
+
+          # Create a markdown file with all options for reference
+          CASE_CODE="${{ needs.prepare-inputs.outputs.case_code }}"
+          CACHE_DIR=".ci/cache/$CASE_CODE"
+          CONFIG_OPTIONS=$(cat "$CACHE_DIR/config_options.json")
+
+          echo "# Configuration Options for $CASE_CODE" > CONFIG_OPTIONS.md
+          echo "| Option | Current Value |" >> CONFIG_OPTIONS.md
+          echo "|--------|---------------|" >> CONFIG_OPTIONS.md
+
+          while read -r option; do
+            value=$(grep -E "^$option *=" "${{ needs.prepare-inputs.outputs.config_path }}" | cut -d'=' -f2- | xargs)
+            echo "| $option | $value |" >> CONFIG_OPTIONS.md
+          done < <(echo "$CONFIG_OPTIONS" | jq -r '.[]')
+
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add CONFIG_OPTIONS.md
+          git commit -m "Add config options reference for $CASE_CODE" || echo "No changes to commit"
+          git push
+
+  wait-for-update:
     needs: generate-ui
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/github-script@v6
-        id: get-inputs
-        with:
-          script: |
-            // Generate form dynamically based on config options
-            const options = ${{ needs.generate-ui.outputs.config_options }};
-            const comments = ${{ needs.generate-ui.outputs.config_comments }};
+      - name: Wait for config update
+        run: |
+          echo "Waiting for manual update of the config file..."
+          echo "Please edit ${{ needs.prepare-inputs.outputs.config_path }} and commit changes"
+          echo "This job will wait for 5 minutes before timing out"
+          sleep 300
 
-            // Create form inputs
-            const inputs = {};
-            options.forEach(option => {
-              inputs[option] = {
-                description: `Enter value for ${option}`,
-                required: true,
-                default: 'REPLACE_ME'
-              };
-            });
-
-            // Create workflow dispatch with dynamic inputs
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'update_config_values.yml',
-              ref: 'main',
-              inputs: inputs
-            });
-
-            return { result: 'success' };
-
-      - name: Wait for user inputs
-        uses: fountainhead/action-wait-for-check@v1.0.0
-        with:
-          ref: ${{ github.ref }}
-          check-name: "Update Config Values"
-          timeout-seconds: 3600
-          interval-seconds: 10
-
-  final-update:
-    needs: [generate-ui, update-config]
+  verify-update:
+    needs: wait-for-update
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update config file
+      - name: Verify changes
         run: |
-          CONFIG_PATH="${{ needs.generate-ui.outputs.config_path }}"
-          CASE_CODE="${{ env.CASE_CODE }}"
+          CONFIG_PATH="${{ needs.prepare-inputs.outputs.config_path }}"
+          CASE_CODE="${{ needs.prepare-inputs.outputs.case_code }}"
+          CACHE_DIR=".ci/cache/$CASE_CODE"
 
-          # Get the user inputs from the previous job
-          # This would need to be implemented based on how you store the inputs
-          # For example, you could use the GitHub API to get the workflow run inputs
+          # Check if any REPLACE_ME values remain
+          if grep -q "REPLACE_ME" "$CONFIG_PATH"; then
+            echo "::error::Some configuration options still contain placeholder values"
+            grep "REPLACE_ME" "$CONFIG_PATH"
+            exit 1
+          fi
 
-          echo "Updating config file at $CONFIG_PATH with user inputs"
-          # Implementation would go here to update the file
+          # Compare with original
+          if diff -q "$CONFIG_PATH" "$CACHE_DIR/original_config.cfg"; then
+            echo "::error::No changes detected in configuration file"
+            exit 1
+          fi
 
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add "$CONFIG_PATH"
-          git commit -m "Updated config for $CASE_CODE with user inputs"
-          git push
+          echo "Configuration updated successfully"
