@@ -9,53 +9,36 @@ on:
         type: string
 
 jobs:
-  generate-inputs:
+  prepare-config:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse config file
-        id: parse-config
+      - name: Parse config and commit metadata
         run: |
-          CONFIG_PATH="VandV/${{ inputs.case_code }}/config_sa_restart.cfg"
+          CASE_CODE="${{ inputs.case_code }}"
+          CONFIG_PATH="VandV/$CASE_CODE/config_sa_restart.cfg"
+
           if [ ! -f "$CONFIG_PATH" ]; then
             echo "::error::Config file not found at $CONFIG_PATH"
             exit 1
           fi
 
-          # Create directory for artifacts
-          mkdir -p artifacts
+          echo "Parsing $CONFIG_PATH"
 
-          # Extract all config options (non-comment lines with = sign)
-          grep -E '^[^#%].*=' "$CONFIG_PATH" | awk -F '=' '{print $1}' | sed 's/ *$//' | jq -R -s -c 'split("\n") | map(select(length > 0))' > artifacts/config_options.json
+          mkdir -p .ci/cache/$CASE_CODE
 
-          # Save additional metadata
-          echo "${{ inputs.case_code }}" > artifacts/case_code.txt
-          echo "$CONFIG_PATH" > artifacts/config_path.txt
-          cp "$CONFIG_PATH" artifacts/original_config.cfg
+          # Extract keys
+          grep -E '^[^#%].*=' "$CONFIG_PATH" | awk -F '=' '{print $1}' | sed 's/ *$//' \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))' > .ci/cache/$CASE_CODE/config_options.json
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: config-data
-          path: artifacts/
-          retention-days: 1
+          echo "$CASE_CODE" > .ci/cache/$CASE_CODE/case_code.txt
+          echo "$CONFIG_PATH" > .ci/cache/$CASE_CODE/config_path.txt
+          cp "$CONFIG_PATH" .ci/cache/$CASE_CODE/original_config.cfg
 
-      - name: Trigger update workflow
-        uses: actions/github-script@v6
-        with:
-          script: |
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'update_config.yml',
-                ref: 'main',
-                inputs: {
-                  case_code: '${{ inputs.case_code }}'
-                }
-              });
-            } catch (error) {
-              core.error(`Failed to trigger workflow: ${error}`);
-              throw error;
-            }
+          echo "Committing metadata files to repo..."
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add .ci/cache/$CASE_CODE/
+          git commit -m "Cache config metadata for $CASE_CODE"
+          git push
