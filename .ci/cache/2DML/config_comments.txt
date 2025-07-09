@@ -1,0 +1,27 @@
+%
+%
+% ----------------------------- FREESTREAM ------------------------------ %
+%
+%
+% -------------------------- REFERENCE VALUES --------------------------- %
+%
+%
+% ------------------------- BOUNDARY CONDITIONS ------------------------- %
+%
+%
+%
+% ---------------------------- FLUID MODELS ----------------------------- %
+%
+%
+%
+% ------------- COMMON PARAMETERS DEFINING THE NUMERICAL METHOD ---------------%
+%
+% -------------------- FLOW NUMERICAL METHOD DEFINITION -----------------------%
+%
+%MUSCL_FLOW= YES
+%SLOPE_LIMITER_FLOW= VENKATAKRISHNAN_WANG
+% -------------------- TURBULENT NUMERICAL METHOD DEFINITION ------------------%
+%
+% --------------------------- CONVERGENCE PARAMETERS --------------------------%
+% --------------------------- INPUT / OUTPUT ---------------------------- %
+%
