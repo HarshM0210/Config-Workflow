@@ -1,0 +1,46 @@
+name: Select Validation Case
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "Validation category"
+        required: true
+        type: choice
+        options: [Basic, Extended]
+      case_code:
+        description: "Validation case code (e.g., 2DZP)"
+        required: true
+
+jobs:
+  extract-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set config path
+        id: setpath
+        run: |
+          echo "cfg_file=$(find VandV/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }} -name '*.cfg' | head -n 1)" >> $GITHUB_OUTPUT
+
+      - name: Extract config options to YAML
+        run: |
+          mkdir -p generated
+          python3 .github/scripts/extract_config.py "${{ steps.setpath.outputs.cfg_file }}" > generated/config_template.yml
+
+      - name: Create PR with config template
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="edit-${{ github.event.inputs.category }}-${{ github.event.inputs.case_code }}"
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git checkout -b $BRANCH
+          mv generated/config_template.yml .github/config_template.yml
+          git add .github/config_template.yml
+          git commit -m "📝 Config template for ${{ github.event.inputs.case_code }}"
+          git push origin $BRANCH
+
+          gh pr create --title "Edit config for ${{ github.event.inputs.case_code }}" \
+                       --body "Edit the values in \`.github/config_template.yml\` and commit. This will update the original config file." \
+                       --head $BRANCH

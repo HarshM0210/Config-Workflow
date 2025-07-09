@@ -1,0 +1,16 @@
+name: Apply Config Changes
+
+on:
+  push:
+    paths:
+      - ".github/config_template.yml"
+
+jobs:
+  update-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update .cfg file
+        run: |
+          python3 .github/scripts/update_cfg_from_yaml.py .github/config_template.yml
