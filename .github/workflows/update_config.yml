@@ -1,44 +1,55 @@
-name: Select Validation Case
+name: Update Config Options
 
 on:
   workflow_dispatch:
     inputs:
       case_code:
-        description: "Enter the Validation Case Code (e.g., 2DZP)"
+        description: "Validation Case Code"
         required: true
         type: string
 
 jobs:
-  prepare-config:
+  update-config:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse config and commit metadata
+      - name: Load cached config data
+        id: load-cache
         run: |
           CASE_CODE="${{ inputs.case_code }}"
-          CONFIG_PATH="VandV/$CASE_CODE/config_sa_restart.cfg"
+          CACHE_DIR=".ci/cache/$CASE_CODE"
 
-          if [ ! -f "$CONFIG_PATH" ]; then
-            echo "::error::Config file not found at $CONFIG_PATH"
+          if [ ! -f "$CACHE_DIR/original_config.cfg" ]; then
+            echo "::error::Cached config not found for $CASE_CODE"
             exit 1
           fi
 
-          echo "Parsing $CONFIG_PATH"
+          CONFIG_PATH=$(cat "$CACHE_DIR/config_path.txt")
 
-          mkdir -p .ci/cache/$CASE_CODE
+          echo "CONFIG_PATH=$CONFIG_PATH" >> $GITHUB_ENV
+          echo "CASE_CODE=$CASE_CODE" >> $GITHUB_ENV
 
-          # Extract keys
-          grep -E '^[^#%].*=' "$CONFIG_PATH" | awk -F '=' '{print $1}' | sed 's/ *$//' \
-            | jq -R -s -c 'split("\n") | map(select(length > 0))' > .ci/cache/$CASE_CODE/config_options.json
+          cp "$CACHE_DIR/original_config.cfg" "$CONFIG_PATH"
+          jq -r '.[]' "$CACHE_DIR/config_options.json" > config_keys.txt
 
-          echo "$CASE_CODE" > .ci/cache/$CASE_CODE/case_code.txt
-          echo "$CONFIG_PATH" > .ci/cache/$CASE_CODE/config_path.txt
-          cp "$CONFIG_PATH" .ci/cache/$CASE_CODE/original_config.cfg
+      - name: Update config with placeholders
+        run: |
+          echo "Updating: $CONFIG_PATH"
+          while read key; do
+            placeholder="REPLACE_ME_FOR_${key}"
+            if grep -q "^$key *=.*" "$CONFIG_PATH"; then
+              sed -i "s/^$key *=.*/$key= $placeholder/" "$CONFIG_PATH"
+            else
+              echo "$key= $placeholder" >> "$CONFIG_PATH"
+            fi
+          done < config_keys.txt
 
-          echo "Committing metadata files to repo..."
+      - name: Commit updated config
+        run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add .ci/cache/$CASE_CODE/
-          git commit -m "Cache config metadata for $CASE_CODE"
+          git add "$CONFIG_PATH"
+          git commit -m "Updated config for $CASE_CODE"
           git push
