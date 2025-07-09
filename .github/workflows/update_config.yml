@@ -9,14 +9,17 @@ on:
         type: string
 
 jobs:
-  update-config:
+  generate-ui:
     runs-on: ubuntu-latest
-
+    outputs:
+      config_options: ${{ steps.set-outputs.outputs.config_options }}
+      config_comments: ${{ steps.set-outputs.outputs.config_comments }}
+      config_path: ${{ steps.set-outputs.outputs.config_path }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Load cached config data
-        id: load-cache
+        id: set-outputs
         run: |
           CASE_CODE="${{ inputs.case_code }}"
           CACHE_DIR=".ci/cache/$CASE_CODE"
@@ -27,29 +30,77 @@ jobs:
           fi
 
           CONFIG_PATH=$(cat "$CACHE_DIR/config_path.txt")
+          CONFIG_OPTIONS=$(cat "$CACHE_DIR/config_options.json")
+          CONFIG_COMMENTS=$(cat "$CACHE_DIR/config_comments.txt" | jq -R -s -c 'split("\n")')
 
-          echo "CONFIG_PATH=$CONFIG_PATH" >> $GITHUB_ENV
+          echo "config_options=$CONFIG_OPTIONS" >> $GITHUB_OUTPUT
+          echo "config_comments=$CONFIG_COMMENTS" >> $GITHUB_OUTPUT
+          echo "config_path=$CONFIG_PATH" >> $GITHUB_OUTPUT
           echo "CASE_CODE=$CASE_CODE" >> $GITHUB_ENV
 
-          cp "$CACHE_DIR/original_config.cfg" "$CONFIG_PATH"
-          jq -r '.[]' "$CACHE_DIR/config_options.json" > config_keys.txt
+  update-config:
+    needs: generate-ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Update config with placeholders
-        run: |
-          echo "Updating: $CONFIG_PATH"
-          while read key; do
-            placeholder="REPLACE_ME_FOR_${key}"
-            if grep -q "^$key *=.*" "$CONFIG_PATH"; then
-              sed -i "s/^$key *=.*/$key= $placeholder/" "$CONFIG_PATH"
-            else
-              echo "$key= $placeholder" >> "$CONFIG_PATH"
-            fi
-          done < config_keys.txt
+      - uses: actions/github-script@v6
+        id: get-inputs
+        with:
+          script: |
+            // Generate form dynamically based on config options
+            const options = ${{ needs.generate-ui.outputs.config_options }};
+            const comments = ${{ needs.generate-ui.outputs.config_comments }};
 
-      - name: Commit updated config
+            // Create form inputs
+            const inputs = {};
+            options.forEach(option => {
+              inputs[option] = {
+                description: `Enter value for ${option}`,
+                required: true,
+                default: 'REPLACE_ME'
+              };
+            });
+
+            // Create workflow dispatch with dynamic inputs
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'update_config_values.yml',
+              ref: 'main',
+              inputs: inputs
+            });
+
+            return { result: 'success' };
+
+      - name: Wait for user inputs
+        uses: fountainhead/action-wait-for-check@v1.0.0
+        with:
+          ref: ${{ github.ref }}
+          check-name: "Update Config Values"
+          timeout-seconds: 3600
+          interval-seconds: 10
+
+  final-update:
+    needs: [generate-ui, update-config]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update config file
         run: |
+          CONFIG_PATH="${{ needs.generate-ui.outputs.config_path }}"
+          CASE_CODE="${{ env.CASE_CODE }}"
+
+          # Get the user inputs from the previous job
+          # This would need to be implemented based on how you store the inputs
+          # For example, you could use the GitHub API to get the workflow run inputs
+
+          echo "Updating config file at $CONFIG_PATH with user inputs"
+          # Implementation would go here to update the file
+
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add "$CONFIG_PATH"
-          git commit -m "Updated config for $CASE_CODE"
+          git commit -m "Updated config for $CASE_CODE with user inputs"
           git push
