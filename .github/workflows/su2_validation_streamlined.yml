@@ -18,44 +18,45 @@ on:
         description: "Validation Case Code (e.g., 2DML)"
         required: true
         type: string
-      solver:
-        description: "Solver Type"
-        required: false
-        type: choice
-        options:
-          - RANS
-          - EULER
-          - NAVIER_STOKES
-        default: RANS
-      mach_number:
-        description: "Mach Number"
-        required: false
-        type: string
-        default: "0.12"
-      aoa:
-        description: "Angle of Attack (degrees)"
-        required: false
-        type: string
-        default: "0"
-      cfl_number:
-        description: "CFL Number"
-        required: false
-        type: string
-        default: "100.0"
-      iterations:
-        description: "Number of Iterations"
-        required: false
-        type: string
-        default: "100000"
       turb_model:
         description: "Turbulence Model"
-        required: false
+        required: true
         type: choice
         options:
           - SA
           - SST
-          - NONE
         default: SA
+      sa_options:
+        description: "SA Model Options"
+        required: true
+        type: choice
+        options:
+          - NONE
+          - NEGATIVE
+          - EDWARDS
+          - WITHFT2
+          - QCR2000
+          - COMPRESSIBILITY
+          - ROTATION
+          - BCM
+          - EXPERIMENTAL
+        default: NONE
+      sst_options:
+        description: "SST Model Options"
+        required: true
+        type: choice
+        options:
+          - NONE
+          - V2003m
+          - V1994m
+          - VORTICITY
+          - KATO_LAUNDER
+          - UQ
+          - SUSTAINING
+          - COMPRESSIBILITY-WILCOX
+          - COMPRESSIBILITY-SARKAR
+          - DIMENSIONLESS_LIMIT
+        default: NONE
       custom_config:
         description: 'Custom Config (JSON format: {"PARAM":"value"})'
         required: false
@@ -101,23 +102,14 @@ jobs:
           python3 -c "import json; defaults = json.load(open('config-repo/config_defaults.json')); [print(f'{k}={v}') for k,v in defaults.items()]" > all_params.txt
 
           # Update main configuration parameters
-          if [ -n "${{ inputs.solver }}" ]; then
-            sed -i "s/^SOLVER=.*/SOLVER= ${{ inputs.solver }}/" "$CONFIG_PATH"
-          fi
           if [ -n "${{ inputs.turb_model }}" ]; then
             sed -i "s/^KIND_TURB_MODEL=.*/KIND_TURB_MODEL= ${{ inputs.turb_model }}/" "$CONFIG_PATH"
           fi
           if [ -n "${{ inputs.mach_number }}" ]; then
-            sed -i "s/^MACH_NUMBER=.*/MACH_NUMBER= ${{ inputs.mach_number }}/" "$CONFIG_PATH"
+            sed -i "s/^SA_OPTIONS=.*/SA_OPTIONS= ${{ inputs.sa_options }}/" "$CONFIG_PATH"
           fi
           if [ -n "${{ inputs.aoa }}" ]; then
-            sed -i "s/^AOA=.*/AOA= ${{ inputs.aoa }}/" "$CONFIG_PATH"
-          fi
-          if [ -n "${{ inputs.cfl_number }}" ]; then
-            sed -i "s/^CFL_NUMBER=.*/CFL_NUMBER= ${{ inputs.cfl_number }}/" "$CONFIG_PATH"
-          fi
-          if [ -n "${{ inputs.iterations }}" ]; then
-            sed -i "s/^ITER=.*/ITER= ${{ inputs.iterations }}/" "$CONFIG_PATH"
+            sed -i "s/^SST_OPTIONS=.*/SST_OPTIONS= ${{ inputs.sst_options }}/" "$CONFIG_PATH"
           fi
 
           # Apply all default parameters from JSON
