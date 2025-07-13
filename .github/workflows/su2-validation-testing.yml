@@ -1,4 +1,4 @@
-name: SU2-Validation-Pipeline
+name: SU2 Validation Pipeline
 
 on:
   workflow_dispatch:
@@ -26,25 +26,52 @@ on:
           - SA
           - SST
       configuration:
-        description: "Configuration (e.g., Configuration 1 or All)"
+        description: "Configuration (Specific Configuration or All)"
         required: true
         type: string
       author_name:
-        description: "Author Name (e.g., Harsh)"
+        description: "Author Name"
         required: true
         type: string
 
 jobs:
-  su2-validation:
+  validate:
     runs-on: ubuntu-latest
-
     env:
-      SU2_VANDV_REPO: https://github.com/HarshM0210/VandV.git
-      SU2_VANDV_BRANCH: main
+      SU2_MAIN_DIR: ./su2-main
+      VANDV_DIR: ./vandv
+      CATEGORY: ${{ inputs.category }}
+      CASE_CODE: ${{ inputs.case_code }}
+      MODEL: ${{ inputs.turbulence_model }}
+      CONFIG: ${{ inputs.configuration }}
+      AUTHOR: ${{ inputs.author_name }}
 
     steps:
       - name: Checkout SU2 Main Repo
         uses: actions/checkout@v4
+        with:
+          repository: HarshM0210/Config-Workflow
+          path: ${{ env.SU2_MAIN_DIR }}
+
+      - name: Checkout VandV Repo
+        uses: actions/checkout@v4
+        with:
+          repository: HarshM0210/VandV
+          path: ${{ env.VANDV_DIR }}
+
+      - name: Determine Configurations
+        id: configs
+        run: |
+          if [ "$CONFIG" = "All" ]; then
+            # Find all configurations in the specified path
+            config_path="$SU2_MAIN_DIR/ValidationCases/$CATEGORY/$CASE_CODE/$MODEL"
+            configs=$(ls -d $config_path/Configuration* | xargs -n1 basename | tr '\n' ',' | sed 's/,$//')
+            echo "configs=$configs" >> $GITHUB_OUTPUT
+            echo "is_all=true" >> $GITHUB_OUTPUT
+          else
+            echo "configs=$CONFIG" >> $GITHUB_OUTPUT
+            echo "is_all=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
@@ -97,102 +124,67 @@ jobs:
         run: |
           SU2_CFD --help
 
-      - name: Clone VandV Repo
-        uses: actions/checkout@v4
-        with:
-          repository: HarshM0210/VandV
-          ref: ${{ env.SU2_VANDV_BRANCH }}
-          path: su2-vandv
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Determine Configurations to Process
-        id: configs
-        run: |
-          if [ "${{ github.event.inputs.configuration }}" == "All" ]; then
-            BASE_PATH="ValidationCases/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }}/${{ github.event.inputs.turbulence_model }}"
-            CONFIGS=$(ls -d "$BASE_PATH"/*/ | xargs -n1 basename | tr '\n' ',' | sed 's/,$//')
-            echo "configurations=${CONFIGS}" >> $GITHUB_OUTPUT
-            echo "Processing ALL configurations: ${CONFIGS}"
-          else
-            echo "configurations=${{ github.event.inputs.configuration }}" >> $GITHUB_OUTPUT
-            echo "Processing single configuration: ${{ github.event.inputs.configuration }}"
-          fi
-
       - name: Process Configurations
-        id: process_configs
+        working-directory: ${{ env.SU2_MAIN_DIR }}
         run: |
-          IFS=',' read -ra CONFIG_ARRAY <<< "${{ steps.configs.outputs.configurations }}"
-          for CONFIG in "${CONFIG_ARRAY[@]}"; do
-            echo "::group::Processing configuration: ${CONFIG}"
-            
-            MAIN_CASE_PATH="ValidationCases/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }}/${{ github.event.inputs.turbulence_model }}/${CONFIG}"
-            VANDV_CASE_PATH="su2-vandv/ValidationCases/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }}/${{ github.event.inputs.turbulence_model }}/${CONFIG}"
+          IFS=',' read -ra CONFIGS <<< "${{ steps.configs.outputs.configs }}"
 
-            # Copy files (no cleanup during processing)
-            mkdir -p "${MAIN_CASE_PATH}"
-            for mesh_dir in "${VANDV_CASE_PATH}"/*/; do
-              if [ -d "$mesh_dir" ] && [[ ! "$(basename "$mesh_dir")" =~ ^\.\.?$ ]]; then
-                mesh_name=$(basename "${mesh_dir}")
-                target_dir="${MAIN_CASE_PATH}/${mesh_name}"
-                mkdir -p "${target_dir}"
-                cp -v "${mesh_dir}"/* "${target_dir}"/
-                cp -v "${MAIN_CASE_PATH}/Config.cfg" "${target_dir}/"
+          for config in "${CONFIGS[@]}"; do
+            echo "Processing configuration: $config"
+            
+            # Paths setup
+            MAIN_CONFIG_DIR="ValidationCases/$CATEGORY/$CASE_CODE/$MODEL/$config"
+            VANDV_CONFIG_DIR="$VANDV_DIR/ValidationCases/$CATEGORY/$CASE_CODE/$MODEL/$config"
+            
+            # Copy mesh and restart files
+            for mesh_dir in $MAIN_CONFIG_DIR/*/; do
+              if [ -d "$mesh_dir" ] && [ "$(basename "$mesh_dir")" != "." ] && [ "$(basename "$mesh_dir")" != ".." ]; then
+                mesh_name=$(basename "$mesh_dir")
+                vandv_mesh_dir="$VANDV_CONFIG_DIR/$mesh_name"
+                
+                if [ -d "$vandv_mesh_dir" ]; then
+                  cp "$MAIN_CONFIG_DIR/Config.cfg" "$mesh_dir/"
+                  cp "$vandv_mesh_dir"/* "$mesh_dir/" || echo "No files to copy in $vandv_mesh_dir"
+                fi
               fi
             done
-
-            # Run validation
-            cd ValidationCases
-            python Automation.py \
-              "${{ github.event.inputs.category }}" \
-              "${{ github.event.inputs.case_code }}" \
-              "${{ github.event.inputs.turbulence_model }}" \
-              "${CONFIG}"
-            cd ..
-            echo "::endgroup::"
+            
+            # Run Automation
+            python3 ValidationCases/Automation.py \
+              --category "$CATEGORY" \
+              --case_code "$CASE_CODE" \
+              --model "$MODEL" \
+              --config "$config"
+            
+            # Cleanup mesh directories
+            for mesh_dir in $MAIN_CONFIG_DIR/*/; do
+              if [ -d "$mesh_dir" ] && [ "$(basename "$mesh_dir")" != "." ] && [ "$(basename "$mesh_dir")" != ".." ]; then
+                find "$mesh_dir" -maxdepth 1 -type f -exec rm -f {} \;
+              fi
+            done
           done
 
-      - name: Archive Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: "${{ github.event.inputs.category }}_${{ github.event.inputs.case_code }}_${{ github.event.inputs.turbulence_model }}_${{ github.event.inputs.configuration | replace(' ', '_') }}_${{ github.event.inputs.author_name }}"
-          path: |
-            ValidationCases/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }}/${{ github.event.inputs.turbulence_model }}/**/*.csv
-            ValidationCases/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }}/${{ github.event.inputs.turbulence_model }}/**/*.vtu
-            ValidationCases/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }}/${{ github.event.inputs.turbulence_model }}/**/*.png
-            ValidationCases/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }}/${{ github.event.inputs.turbulence_model }}/**/plots/
-          retention-days: 14
-          if-no-files-found: warn
-
-      - name: Complete Cleanup
+      - name: Package Results
+        working-directory: ${{ env.SU2_MAIN_DIR }}
         run: |
-          echo "Starting complete cleanup..."
-          BASE_PATH="ValidationCases/${{ github.event.inputs.category }}/${{ github.event.inputs.case_code }}/${{ github.event.inputs.turbulence_model }}"
-
-          if [ "${{ github.event.inputs.configuration }}" == "All" ]; then
-            # Clean all configurations
-            find "${BASE_PATH}" -type f \( -name "*.su2" -o -name "*.dat" \) -delete
-            echo "Cleaned ALL configurations under ${BASE_PATH}"
+          if [ "${{ steps.configs.outputs.is_all }}" = "true" ]; then
+            artifact_name="${CATEGORY}_${CASE_CODE}_${MODEL}_${AUTHOR}_All"
+            results_dir="ValidationCases/$CATEGORY/$CASE_CODE/$MODEL"
           else
-            # Clean only specified configuration
-            CONFIG_PATH="${BASE_PATH}/${{ github.event.inputs.configuration }}"
-            find "${CONFIG_PATH}" -type f \( -name "*.su2" -o -name "*.dat" \) -delete
-            echo "Cleaned single configuration: ${CONFIG_PATH}"
+            artifact_name="${CATEGORY}_${CASE_CODE}_${MODEL}_${CONFIG}_${AUTHOR}"
+            results_dir="ValidationCases/$CATEGORY/$CASE_CODE/$MODEL/$CONFIG"
           fi
 
-          # Restore empty mesh folder structure
-          IFS=',' read -ra CONFIG_ARRAY <<< "${{ steps.configs.outputs.configurations }}"
-          for CONFIG in "${CONFIG_ARRAY[@]}"; do
-            CONFIG_PATH="${BASE_PATH}/${CONFIG}"
-            for mesh_dir in "${CONFIG_PATH}"/*/; do
-              if [ -d "$mesh_dir" ]; then
-                # Remove all files but keep directory structure
-                find "$mesh_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-                echo "Reset empty folder: ${mesh_dir}"
-              fi
-            done
-          done
+          # Create results archive
+          mkdir -p "results"
+          find "$results_dir" \( -name "*.csv" -o -name "*.vtu" -o -name "*.png" -o -name "*.dat" -o -name "*.cfg" -o -name "*.su2" \) \
+            -exec cp --parents {} "results/" \;
 
-          # Final verification
-          echo "Final folder state:"
-          find "${BASE_PATH}" -type d -empty -exec echo "[EMPTY] {}" \;
-          find "${BASE_PATH}" -type f -name "*" | sort || echo "No files remaining"
+          # Compress results
+          tar -czvf "${artifact_name}.tar.gz" -C "results" .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.CATEGORY }}_${{ env.CASE_CODE }}_${{ env.MODEL }}_${{ env.CONFIG == 'All' && 'All' || env.CONFIG }}_${{ env.AUTHOR }}
+          path: ${{ env.SU2_MAIN_DIR }}/*.tar.gz
