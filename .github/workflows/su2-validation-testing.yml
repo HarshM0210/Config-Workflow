@@ -157,9 +157,9 @@ jobs:
               --config "$config"
             
             # Cleanup mesh directories
-            for mesh_dir in $MAIN_CONFIG_DIR/*/; do
+            for mesh_dir in "$MAIN_CONFIG_DIR"/*/; do
               if [ -d "$mesh_dir" ] && [ "$(basename "$mesh_dir")" != "." ] && [ "$(basename "$mesh_dir")" != ".." ]; then
-                find "$mesh_dir" -maxdepth 1 -type f -exec rm -f {} \;
+                find "$mesh_dir" -maxdepth 1 -type f ! -name "README.md" -exec rm -f {} \;
               fi
             done
           done
