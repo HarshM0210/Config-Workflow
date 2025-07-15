@@ -188,7 +188,7 @@ jobs:
         with:
           repository: HarshM0210/Results
           path: ./results-repo
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Create Branch and Store Plots
         working-directory: ./results-repo
