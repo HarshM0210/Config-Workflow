@@ -128,6 +128,10 @@ jobs:
         working-directory: ${{ env.SU2_MAIN_DIR }}
         run: |
           IFS=',' read -ra CONFIGS <<< "${{ steps.configs.outputs.configs }}"
+          if [ ${#CONFIGS[@]} -eq 0 ]; then
+            echo "Error: No configurations found"
+            exit 1
+          fi
 
           for config in "${CONFIGS[@]}"; do
             echo "Processing configuration: $config"
