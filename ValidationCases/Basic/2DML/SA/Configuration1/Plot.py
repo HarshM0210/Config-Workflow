@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
 import pyvista as pv
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
 import argparse
+import sys
 
 def parse_arguments():
     """Parse command line arguments from the workflow"""
@@ -13,7 +15,18 @@ def parse_arguments():
     parser.add_argument('--turbulence-model', required=True, help='Turbulence model')
     parser.add_argument('--configuration', required=True, help='Configuration name')
     parser.add_argument('--main-path', required=True, help='Main repository path')
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # Validate paths exist
+    if not os.path.exists(args.main_path):
+        raise ValueError(f"Main path does not exist: {args.main_path}")
+    
+    config_path = os.path.join(args.main_path, args.category, args.case_code, 
+                             args.turbulence_model, args.configuration)
+    if not os.path.exists(config_path):
+        raise ValueError(f"Configuration path does not exist: {config_path}")
+    
+    return args
 
 # Configuration - will be set based on arguments
 args = parse_arguments()
@@ -25,9 +38,10 @@ def get_mesh_directories():
     """Detect mesh directories automatically"""
     mesh_dirs = []
     for item in os.listdir(base_dir):
-        if os.path.isdir(os.path.join(base_dir, item)) and item.isdigit():
+        item_path = os.path.join(base_dir, item)
+        if os.path.isdir(item_path) and (item.startswith(('Mesh', 'mesh')) or item.isdigit()):
             mesh_dirs.append(item)
-    return sorted(mesh_dirs, key=lambda x: int(x))
+    return sorted(mesh_dirs, key=lambda x: int(''.join(filter(str.isdigit, x)) or x)
 
 mesh_dirs = get_mesh_directories()
 if not mesh_dirs:
@@ -86,12 +100,32 @@ def load_exp_data():
 def process_simulation_data():
     """Process simulation results from all mesh directories"""
     results = {}
+    
+    # First verify at least one result exists
+    has_results = False
+    for mesh in mesh_dirs:
+        path = os.path.join(base_dir, mesh, "vol_solution.vtu")
+        if os.path.exists(path):
+            has_results = True
+            break
+    
+    if not has_results:
+        raise FileNotFoundError(f"No simulation results found in any mesh directory under {base_dir}")
+    
     for mesh in mesh_dirs:
         path = os.path.join(base_dir, mesh, "vol_solution.vtu")
         print(f"Processing: {path}")
         
         try:
+            if not os.path.exists(path):
+                print(f"Result file not found: {path}")
+                continue
+                
             mesh_data = pv.read(path)
+            if 'Velocity' not in mesh_data.array_names:
+                print(f"Velocity data missing in {path}")
+                continue
+                
             velocity = mesh_data['Velocity']
             mesh_data['U'] = velocity[:, 0]
             mesh_data['U_norm'] = (mesh_data['U'] - U1)/deltaU
@@ -119,7 +153,7 @@ def process_simulation_data():
 
 def create_plots(exp_data, sim_results):
     """Generate validation plots"""
-    output_dir = "plots"  # Changed to match workflow expectations
+    output_dir = "plots"
     os.makedirs(output_dir, exist_ok=True)
     
     mesh_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
@@ -167,12 +201,24 @@ if __name__ == "__main__":
         exp_data = load_exp_data()
     except Exception as e:
         print(f"Fatal error loading experimental data: {e}")
-        exit(1)
+        sys.exit(1)
     
     print("\nProcessing simulation data...")
-    sim_results = process_simulation_data()
+    try:
+        sim_results = process_simulation_data()
+        if not sim_results:
+            print("No valid simulation results found")
+            sys.exit(1)
+    except Exception as e:
+        print(f"Fatal error processing simulation data: {e}")
+        sys.exit(1)
     
     print("\nGenerating plots...")
-    create_plots(exp_data, sim_results)
+    try:
+        create_plots(exp_data, sim_results)
+    except Exception as e:
+        print(f"Fatal error generating plots: {e}")
+        sys.exit(1)
     
     print("\nAll plots generated successfully!")
+    sys.exit(0)

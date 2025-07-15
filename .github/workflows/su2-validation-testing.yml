@@ -66,7 +66,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake python3 python3-pip
           sudo apt-get install -y libopenmpi-dev openmpi-bin ninja-build
-          pip3 install numpy matplotlib pandas meson
+          pip3 install numpy matplotlib pandas meson pyvista
 
       - name: Build SU2
         run: |
@@ -74,6 +74,10 @@ jobs:
           python3 -m meson setup build --prefix=/usr/local
           ninja -C build
           sudo ninja -C build install
+
+      - name: Verify SU2 Installation
+        run: |
+          SU2_CFD --version || (echo "SU2 installation failed" && exit 1)
 
       - name: Process Configurations
         run: |
@@ -183,7 +187,7 @@ jobs:
           if [ -n "$(git status --porcelain)" ]; then
             git add .
             git commit -m "Update validation results for ${{ inputs.case_code }} by ${{ inputs.author_name }}"
-            git push origin "$BRANCH_NAME"
+            git push origin "$BRANCH_NAME" --force
           else
             echo "No changes to commit"
           fi

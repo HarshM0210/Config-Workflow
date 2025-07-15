@@ -18,8 +18,10 @@ def run_command(cmd, cwd=None):
                               capture_output=True, text=True, check=True)
         return result.stdout
     except subprocess.CalledProcessError as e:
-        print(f"Error running command: {cmd}")
-        print(f"Error: {e.stderr}")
+        print(f"Command failed: {cmd}")
+        print(f"Exit code: {e.returncode}")
+        print(f"Error output:\n{e.stderr}")
+        print(f"Standard output:\n{e.stdout}")
         return None
 
 def copy_files_from_vandv(vandv_path, main_path, config_name):
@@ -83,83 +85,51 @@ def run_su2_simulation(mesh_folder):
     
     print(f"Running SU2 simulation in {mesh_folder.name}")
     
-    # Run SU2_CFD
-    cmd = f"SU2_CFD Config.cfg"
+    # Run SU2_CFD with full path
+    cmd = f"SU2_CFD {config_file}"
     result = run_command(cmd, cwd=mesh_folder)
     
     if result is not None:
-        print(f"  Simulation completed for {mesh_folder.name}")
-        return True
+        # Verify results were generated
+        history_file = mesh_folder / "history.csv"
+        solution_file = mesh_folder / "vol_solution.vtu"
+        
+        if history_file.exists() and solution_file.exists():
+            print(f"  Simulation completed successfully for {mesh_folder.name}")
+            return True
+        else:
+            print(f"  Simulation completed but results missing for {mesh_folder.name}")
+            return False
     else:
         print(f"  Simulation failed for {mesh_folder.name}")
         return False
 
-def run_plot_script(config_path):
+def run_plot_script(config_path, args):
     """Run Plot.py script to generate validation plots"""
     plot_script = config_path / "Plot.py"
     
     if not plot_script.exists():
         print(f"Plot.py not found in {config_path}")
-        # Create a mock Plot.py for testing
-        create_mock_plot_script(plot_script)
+        return False
     
     print(f"Running Plot.py in {config_path}")
-    cmd = f"python3 Plot.py"
+    cmd = (f"python3 Plot.py --category {args.category} --case-code {args.case_code} "
+          f"--turbulence-model {args.turbulence_model} --configuration {args.configuration} "
+          f"--main-path {args.main_path}")
     result = run_command(cmd, cwd=config_path)
     
     if result is not None:
-        print("  Plots generated successfully")
-        return True
+        # Verify plots were generated
+        plots_dir = config_path / "plots"
+        if plots_dir.exists() and any(plots_dir.iterdir()):
+            print("  Plots generated successfully")
+            return True
+        else:
+            print("  Plot script ran but no plots were generated")
+            return False
     else:
         print("  Plot generation failed")
         return False
-
-def create_mock_plot_script(plot_path):
-    """Create a mock Plot.py script for testing"""
-    mock_script = '''#!/usr/bin/env python3
-import matplotlib.pyplot as plt
-import numpy as np
-import os
-
-# Create plots directory
-os.makedirs("plots", exist_ok=True)
-
-# Mock convergence plot
-plt.figure(figsize=(10, 6))
-iterations = np.arange(1, 101)
-residuals = np.exp(-iterations/20) * (1 + 0.1*np.random.random(100))
-plt.semilogy(iterations, residuals, 'b-', linewidth=2)
-plt.xlabel('Iterations')
-plt.ylabel('Residual')
-plt.title('Convergence History')
-plt.grid(True)
-plt.savefig('plots/convergence.png', dpi=300, bbox_inches='tight')
-plt.close()
-
-# Mock validation plot
-plt.figure(figsize=(10, 6))
-x_exp = np.linspace(0, 1, 20)
-y_exp = np.sin(2*np.pi*x_exp) + 0.1*np.random.random(20)
-x_cfd = np.linspace(0, 1, 100)
-y_cfd = np.sin(2*np.pi*x_cfd)
-
-plt.plot(x_exp, y_exp, 'ro', label='Experimental Data', markersize=6)
-plt.plot(x_cfd, y_cfd, 'b-', label='CFD Results', linewidth=2)
-plt.xlabel('X/C')
-plt.ylabel('Cp')
-plt.title('Validation Results')
-plt.legend()
-plt.grid(True)
-plt.savefig('plots/validation.png', dpi=300, bbox_inches='tight')
-plt.close()
-
-print("Mock plots generated successfully")
-'''
-    
-    with open(plot_path, 'w') as f:
-        f.write(mock_script)
-    
-    os.chmod(plot_path, 0o755)
 
 def collect_results(config_path, output_path):
     """Collect all results and organize them"""
@@ -228,19 +198,22 @@ def main():
             simulation_success = False
     
     if not simulation_success:
-        print("Some simulations failed, but continuing...")
+        print("Warning: Some simulations failed")
     
-    # Step 4: Generate plots
+    # Step 4: Generate plots (only if at least one simulation succeeded)
     print("Step 4: Generating plots...")
-    if not run_plot_script(config_path):
-        print("Plot generation failed, but continuing...")
+    if simulation_success:
+        if not run_plot_script(config_path, args):
+            print("Plot generation failed")
+    else:
+        print("Skipping plot generation due to failed simulations")
     
     # Step 5: Collect results
     print("Step 5: Collecting results...")
     collect_results(config_path, args.output_path)
     
-    print("SU2 validation automation completed successfully!")
-    return 0
+    print("SU2 validation automation completed!")
+    return 0 if simulation_success else 2  # Return 2 for partial success
 
 if __name__ == "__main__":
     sys.exit(main())
