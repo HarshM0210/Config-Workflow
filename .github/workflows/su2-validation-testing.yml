@@ -30,7 +30,7 @@ on:
         required: true
         type: string
       author_name:
-        description: "Author Name"
+        description: "Author Name (e.g. John)"
         required: true
         type: string
 
@@ -182,6 +182,49 @@ jobs:
 
           # Compress results
           tar -czvf "${artifact_name}.tar.gz" -C "results" .
+
+      - name: Checkout Results Repo
+        uses: actions/checkout@v4
+        with:
+          repository: HarshM0210/Results
+          path: ./results-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Branch and Store Plots
+        working-directory: ./results-repo
+        run: |
+          # Configure git
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # Create branch if it doesn't exist
+          branch_name="${CASE_CODE}_${AUTHOR}"
+          git checkout -b "$branch_name" 2>/dev/null || git checkout "$branch_name"
+
+          # Create target directory
+          target_dir="vandv_files/$CASE_CODE"
+          mkdir -p "$target_dir"
+
+          # Copy plots based on configuration
+          if [ "${{ steps.configs.outputs.is_all }}" = "true" ]; then
+            IFS=',' read -ra CONFIGS <<< "${{ steps.configs.outputs.configs }}"
+            for config in "${CONFIGS[@]}"; do
+              plot_folder="${CASE_CODE}_${MODEL}_${config}"
+              if [ -d "$SU2_MAIN_DIR/ValidationCases/$CATEGORY/$CASE_CODE/$MODEL/$config/plots" ]; then
+                cp -r "$SU2_MAIN_DIR/ValidationCases/$CATEGORY/$CASE_CODE/$MODEL/$config/plots" "$target_dir/$plot_folder"
+              fi
+            done
+          else
+            plot_folder="${CASE_CODE}_${MODEL}_${CONFIG}"
+            if [ -d "$SU2_MAIN_DIR/ValidationCases/$CATEGORY/$CASE_CODE/$MODEL/$CONFIG/plots" ]; then
+              cp -r "$SU2_MAIN_DIR/ValidationCases/$CATEGORY/$CASE_CODE/$MODEL/$CONFIG/plots" "$target_dir/$plot_folder"
+            fi
+          fi
+
+          # Commit and push changes
+          git add .
+          git commit -m "Add validation results for $CASE_CODE by $AUTHOR" || echo "No changes to commit"
+          git push origin "$branch_name"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v3
