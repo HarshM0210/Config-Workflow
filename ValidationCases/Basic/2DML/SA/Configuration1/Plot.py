@@ -3,25 +3,53 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
+import argparse
 
-# Configuration
-su2_main_dir = os.environ.get("SU2_MAIN_DIR", ".")
-base_dir = os.path.join(su2_main_dir, "ValidationCases", "Basic", "2DML", "SA", "Configuration1")
-mesh_dirs = ['047', '093', '185', '369', '737']
-x_positions_mm = [1, 50, 200, 650, 950]
-x_positions_m = [x/1000 for x in x_positions_mm]
+def parse_arguments():
+    """Parse command line arguments from the workflow"""
+    parser = argparse.ArgumentParser(description='SU2 Validation Plotting')
+    parser.add_argument('--category', required=True, help='Validation case category')
+    parser.add_argument('--case-code', required=True, help='Validation case code')
+    parser.add_argument('--turbulence-model', required=True, help='Turbulence model')
+    parser.add_argument('--configuration', required=True, help='Configuration name')
+    parser.add_argument('--main-path', required=True, help='Main repository path')
+    return parser.parse_args()
 
-# Experimental parameters from your file
+# Configuration - will be set based on arguments
+args = parse_arguments()
+base_dir = os.path.join(args.main_path, args.category, args.case_code, 
+                       args.turbulence_model, args.configuration)
+
+# Mesh directories - should be detected automatically
+def get_mesh_directories():
+    """Detect mesh directories automatically"""
+    mesh_dirs = []
+    for item in os.listdir(base_dir):
+        if os.path.isdir(os.path.join(base_dir, item)) and item.isdigit():
+            mesh_dirs.append(item)
+    return sorted(mesh_dirs, key=lambda x: int(x))
+
+mesh_dirs = get_mesh_directories()
+if not mesh_dirs:
+    raise ValueError(f"No mesh directories found in {base_dir}")
+
+# Experimental parameters (case-specific - for 2DML)
 U1 = 22.40  # m/s
 deltaU = 19.14  # m/s
 delta_omega = {1:5.236, 50:8.8583, 200:13.771, 650:35.894, 950:50.547}  # mm
+x_positions_mm = sorted(delta_omega.keys())
+x_positions_m = [x/1000 for x in x_positions_mm]
 
-# Load experimental data - FIXED VERSION
 def load_exp_data():
+    """Load experimental data from the configuration directory"""
     exp_data = {}
+    exp_file = os.path.join(base_dir, "exp_data.dat")
+    
+    if not os.path.exists(exp_file):
+        raise FileNotFoundError(f"Experimental data file not found: {exp_file}")
+    
     try:
-        # Read the entire file first
-        with open("exp_data.dat", 'r') as f:
+        with open(exp_file, 'r') as f:
             lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
         
         current_x = None
@@ -29,41 +57,38 @@ def load_exp_data():
         
         for line in lines:
             if "ZONE T=" in line:
-                # Save previous zone's data
                 if current_x is not None and current_data:
                     exp_data[current_x] = pd.DataFrame(current_data, 
                                                      columns=["Y_mm", "U_m_s", "U_norm"])
-                # Get new x position
                 try:
                     current_x = int(float(line.split('"')[-2].split('=')[-1].replace('mm','')))
                 except:
                     continue
                 current_data = []
-            elif "VARIABLES" not in line:  # Skip variables line
+            elif "VARIABLES" not in line:
                 try:
                     parts = list(map(float, line.split()))
-                    if len(parts) >= 5:  # Ensure we have all columns
-                        current_data.append([parts[1], parts[2], parts[4]])  # Y_mm, U_m_s, U_norm
+                    if len(parts) >= 5:
+                        current_data.append([parts[1], parts[2], parts[4]])
                 except ValueError:
                     continue
         
-        # Add the last zone
         if current_x is not None and current_data:
             exp_data[current_x] = pd.DataFrame(current_data, 
                                              columns=["Y_mm", "U_m_s", "U_norm"])
             
-        print("Successfully loaded experimental data for x-positions:", list(exp_data.keys()))
+        print(f"Loaded experimental data for x-positions: {list(exp_data.keys())}")
         return exp_data
         
     except Exception as e:
         raise ValueError(f"Error loading experimental data: {str(e)}")
 
-# Process simulation data
 def process_simulation_data():
+    """Process simulation results from all mesh directories"""
     results = {}
     for mesh in mesh_dirs:
         path = os.path.join(base_dir, mesh, "vol_solution.vtu")
-        print(f"\nProcessing: {path}")
+        print(f"Processing: {path}")
         
         try:
             mesh_data = pv.read(path)
@@ -92,9 +117,9 @@ def process_simulation_data():
             continue
     return results
 
-# Create plots - FIXED VERSION
 def create_plots(exp_data, sim_results):
-    output_dir = "Plots"
+    """Generate validation plots"""
+    output_dir = "plots"  # Changed to match workflow expectations
     os.makedirs(output_dir, exist_ok=True)
     
     mesh_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
@@ -121,12 +146,10 @@ def create_plots(exp_data, sim_results):
                        label='Experimental',
                        **exp_style)
             print(f"Plotting {len(exp_df)} experimental points for x={x_mm}mm")
-        else:
-            print(f"Warning: No experimental data found for x={x_mm}mm")
         
         plt.xlabel(r"$(U-U_1)/\Delta U$", fontsize=12)
         plt.ylabel(r"$y/\delta_\omega$", fontsize=12)
-        plt.title(f"Mixing Layer Profile at x = {x_mm} mm", fontsize=14)  # Removed LaTeX escape issue
+        plt.title(f"Mixing Layer Profile at x = {x_mm} mm")
         plt.grid(True, linestyle=':', alpha=0.5)
         plt.legend(fontsize=10, framealpha=1)
         
@@ -135,8 +158,10 @@ def create_plots(exp_data, sim_results):
         plt.close()
         print(f"Saved: {output_path}")
 
-# Main execution
 if __name__ == "__main__":
+    print(f"Starting plotting for {args.category}/{args.case_code}/"
+          f"{args.turbulence_model}/{args.configuration}")
+    
     print("Loading experimental data...")
     try:
         exp_data = load_exp_data()
