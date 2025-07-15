@@ -9,6 +9,7 @@ import sys
 import argparse
 import subprocess
 import shutil
+import time
 from pathlib import Path
 
 def run_command(cmd, cwd=None):
@@ -70,23 +71,38 @@ def copy_config_to_meshes(config_path, mesh_folders):
     for mesh_folder in mesh_folders:
         if mesh_folder.is_dir():
             target_config = mesh_folder / "Config.cfg"
-            shutil.copy2(config_file, target_config)
-            print(f"Copied config to {mesh_folder.name}")
+            try:
+                shutil.copy2(config_file, target_config)
+                # Verify copy was successful
+                if not target_config.exists():
+                    print(f"Error: Failed to copy config to {mesh_folder.name}")
+                    return False
+                print(f"Successfully copied config to {mesh_folder.name}")
+            except Exception as e:
+                print(f"Error copying config to {mesh_folder.name}: {str(e)}")
+                return False
     
+    # Small delay to ensure filesystem sync
+    time.sleep(1)
     return True
 
 def run_su2_simulation(mesh_folder):
     """Run SU2 simulation in a mesh folder"""
     config_file = mesh_folder / "Config.cfg"
     
+    # Verify config file exists with absolute path
     if not config_file.exists():
-        print(f"Config file not found in {mesh_folder}")
+        print(f"Config file not found at: {config_file.absolute()}")
         return False
     
-    print(f"Running SU2 simulation in {mesh_folder.name}")
+    print(f"\nRunning SU2 simulation in {mesh_folder.name}")
+    print(f"Using config file: {config_file.absolute()}")
+    print(f"Working directory: {mesh_folder.absolute()}")
     
-    # Run SU2_CFD with full path
-    cmd = f"SU2_CFD {config_file}"
+    # Run SU2_CFD with relative path in the correct working directory
+    cmd = "SU2_CFD Config.cfg"
+    print(f"Executing command: '{cmd}' in {mesh_folder}")
+    
     result = run_command(cmd, cwd=mesh_folder)
     
     if result is not None:
@@ -99,6 +115,7 @@ def run_su2_simulation(mesh_folder):
             return True
         else:
             print(f"  Simulation completed but results missing for {mesh_folder.name}")
+            print(f"  Looking for: {history_file} and {solution_file}")
             return False
     else:
         print(f"  Simulation failed for {mesh_folder.name}")
@@ -112,7 +129,7 @@ def run_plot_script(config_path, args):
         print(f"Plot.py not found in {config_path}")
         return False
     
-    print(f"Running Plot.py in {config_path}")
+    print(f"\nRunning Plot.py in {config_path}")
     cmd = (f"python3 Plot.py --category {args.category} --case-code {args.case_code} "
           f"--turbulence-model {args.turbulence_model} --configuration {args.configuration} "
           f"--main-path {args.main_path}")
@@ -147,18 +164,25 @@ def collect_results(config_path, output_path):
         # Copy simulation results
         for pattern in ['*.csv', '*.vtu', '*.cfg', '*.dat', '*.su2']:
             for file in mesh_folder.glob(pattern):
-                shutil.copy2(file, mesh_result_dir)
+                try:
+                    shutil.copy2(file, mesh_result_dir)
+                    print(f"Copied {file.name} to {mesh_result_dir}")
+                except Exception as e:
+                    print(f"Error copying {file}: {str(e)}")
         
         print(f"Collected results from {mesh_folder.name}")
     
-    # Copy plots
+    # Copy plots if they exist
     plots_dir = config_path / "plots"
     if plots_dir.exists():
         target_plots_dir = output_dir / "plots"
         if target_plots_dir.exists():
             shutil.rmtree(target_plots_dir)
-        shutil.copytree(plots_dir, target_plots_dir)
-        print("Collected plots")
+        try:
+            shutil.copytree(plots_dir, target_plots_dir)
+            print("Successfully collected plots")
+        except Exception as e:
+            print(f"Error copying plots: {str(e)}")
 
 def main():
     parser = argparse.ArgumentParser(description='SU2 Validation Automation')
@@ -175,33 +199,50 @@ def main():
     # Construct paths
     config_path = Path(args.main_path) / args.configuration
     
-    print(f"Starting SU2 validation for {args.category}/{args.case_code}/{args.turbulence_model}/{args.configuration}")
+    print(f"\nStarting SU2 validation for {args.category}/{args.case_code}/{args.turbulence_model}/{args.configuration}")
+    print(f"Main path: {args.main_path}")
+    print(f"VandV path: {args.vandv_path}")
+    print(f"Configuration path: {config_path.absolute()}")
     
     # Step 1: Copy files from VandV repo
-    print("Step 1: Copying files from VandV repository...")
+    print("\nStep 1: Copying files from VandV repository...")
     if not copy_files_from_vandv(args.vandv_path, args.main_path, args.configuration):
         print("Failed to copy files from VandV repository")
         return 1
     
     # Step 2: Copy config to mesh folders
-    print("Step 2: Copying configuration to mesh folders...")
+    print("\nStep 2: Copying configuration to mesh folders...")
     mesh_folders = [d for d in config_path.iterdir() if d.is_dir() and d.name.startswith(('Mesh', 'mesh', '1', '2', '3', '4', '5'))]
+    if not mesh_folders:
+        print("Error: No mesh directories found")
+        return 1
+        
     if not copy_config_to_meshes(config_path, mesh_folders):
         print("Failed to copy configuration files")
         return 1
     
+    # Verify config files exist before proceeding
+    print("\nVerifying config files in all mesh directories...")
+    for mesh_folder in mesh_folders:
+        config_file = mesh_folder / "Config.cfg"
+        if not config_file.exists():
+            print(f"Error: Config file missing in {mesh_folder}")
+            return 1
+        else:
+            print(f"Verified config exists in {mesh_folder}")
+    
     # Step 3: Run SU2 simulations
-    print("Step 3: Running SU2 simulations...")
+    print("\nStep 3: Running SU2 simulations...")
     simulation_success = True
     for mesh_folder in mesh_folders:
         if not run_su2_simulation(mesh_folder):
             simulation_success = False
     
     if not simulation_success:
-        print("Warning: Some simulations failed")
+        print("\nWarning: Some simulations failed")
     
     # Step 4: Generate plots (only if at least one simulation succeeded)
-    print("Step 4: Generating plots...")
+    print("\nStep 4: Generating plots...")
     if simulation_success:
         if not run_plot_script(config_path, args):
             print("Plot generation failed")
@@ -209,10 +250,10 @@ def main():
         print("Skipping plot generation due to failed simulations")
     
     # Step 5: Collect results
-    print("Step 5: Collecting results...")
+    print("\nStep 5: Collecting results...")
     collect_results(config_path, args.output_path)
     
-    print("SU2 validation automation completed!")
+    print("\nSU2 validation automation completed!")
     return 0 if simulation_success else 2  # Return 2 for partial success
 
 if __name__ == "__main__":
