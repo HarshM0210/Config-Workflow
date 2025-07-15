@@ -39,6 +39,11 @@ on:
         required: true
         type: string
 
+env:
+  GITHUB_WORKSPACE: ${{ github.workspace }}
+  MAIN_REPO_PATH: ${{ github.workspace }}/main-repo
+  VANDV_REPO_PATH: ${{ github.workspace }}/vandv-repo
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -46,20 +51,14 @@ jobs:
       - name: Checkout Main Repo
         uses: actions/checkout@v4
         with:
-          path: main-repo
+          path: ${{ env.MAIN_REPO_PATH }}
 
       - name: Checkout VandV Repo
         uses: actions/checkout@v4
         with:
           repository: HarshM0210/VandV
-          path: vandv-repo
+          path: ${{ env.VANDV_REPO_PATH }}
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Checkout SU2 Official Repo
-        uses: actions/checkout@v4
-        with:
-          repository: su2code/SU2
-          path: su2-source
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
@@ -92,7 +91,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install numpy matplotlib pyvista pandas
 
-      - name: Clone and Build SU2 (without MPI)
+      - name: Install SU2
         run: |
           git clone https://github.com/su2code/SU2.git
           cd SU2
@@ -110,7 +109,7 @@ jobs:
 
       - name: Verify SU2 installation
         run: |
-          SU2_CFD --help
+          SU2_CFD --version
 
       - name: Process Configurations
         run: |
@@ -120,16 +119,16 @@ jobs:
           CONFIG="${{ inputs.configuration }}"
           AUTHOR="${{ inputs.author_name }}"
 
-          BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
-          VANDV_BASE_PATH="vandv-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          BASE_PATH="${{ env.MAIN_REPO_PATH }}/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          VANDV_BASE_PATH="${{ env.VANDV_REPO_PATH }}/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
 
           # Create results directory
-          mkdir -p results
+          mkdir -p "${{ github.workspace }}/results"
 
           if [ "$CONFIG" = "All" ]; then
             # Process all configurations
             ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${AUTHOR}_All"
-            mkdir -p "results/$ARTIFACT_NAME"
+            mkdir -p "${{ github.workspace }}/results/$ARTIFACT_NAME"
             
             for config_dir in "$BASE_PATH"/Configuration*; do
               if [ -d "$config_dir" ]; then
@@ -137,46 +136,47 @@ jobs:
                 echo "Processing $CONFIG_NAME"
                 
                 # Create config-specific result directory
-                mkdir -p "results/$ARTIFACT_NAME/$CONFIG_NAME"
+                mkdir -p "${{ github.workspace }}/results/$ARTIFACT_NAME/$CONFIG_NAME"
                 
                 # Process this configuration
-                python3 main-repo/ValidationCases/Automation.py \
+                python3 "${{ env.MAIN_REPO_PATH }}/ValidationCases/Automation.py" \
                   --category "$CATEGORY" \
                   --case-code "$CASE_CODE" \
                   --turbulence-model "$TURB_MODEL" \
                   --configuration "$CONFIG_NAME" \
                   --vandv-path "$VANDV_BASE_PATH" \
                   --main-path "$BASE_PATH" \
-                  --output-path "results/$ARTIFACT_NAME/$CONFIG_NAME"
+                  --output-path "${{ github.workspace }}/results/$ARTIFACT_NAME/$CONFIG_NAME"
               fi
             done
           else
             # Process specific configuration
             ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${CONFIG}_${AUTHOR}"
-            mkdir -p "results/$ARTIFACT_NAME"
+            mkdir -p "${{ github.workspace }}/results/$ARTIFACT_NAME"
             
             echo "Processing $CONFIG"
-            python3 main-repo/ValidationCases/Automation.py \
+            python3 "${{ env.MAIN_REPO_PATH }}/ValidationCases/Automation.py" \
               --category "$CATEGORY" \
               --case-code "$CASE_CODE" \
               --turbulence-model "$TURB_MODEL" \
               --configuration "$CONFIG" \
               --vandv-path "$VANDV_BASE_PATH" \
               --main-path "$BASE_PATH" \
-              --output-path "results/$ARTIFACT_NAME"
+              --output-path "${{ github.workspace }}/results/$ARTIFACT_NAME"
           fi
 
       - name: Upload Results as Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.category }}_${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration == 'All' && format('{0}_All', inputs.author_name) || format('{0}_{1}', inputs.configuration, inputs.author_name) }}
-          path: results/
+          path: ${{ github.workspace }}/results/
+          retention-days: 7
 
       - name: Deploy to Results Website
         if: success()
         run: |
           # Clone results repo
-          git clone https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website
+          git clone "https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git" website
           cd website
 
           git config user.name "GitHub Actions"
@@ -192,7 +192,7 @@ jobs:
           # Copy plot folders
           if [ "${{ inputs.configuration }}" = "All" ]; then
             # Copy all configuration plot folders
-            find ../results -name "plots" -type d | while read plot_dir; do
+            find "${{ github.workspace }}/results" -name "plots" -type d | while read plot_dir; do
               config_name=$(basename $(dirname "$plot_dir"))
               target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${config_name}"
               rm -rf "$target_dir"
@@ -204,7 +204,7 @@ jobs:
             rm -rf "$target_dir"
             
             # Find plots directory in results
-            PLOTS_DIR=$(find ../results -name "plots" -type d | head -1)
+            PLOTS_DIR=$(find "${{ github.workspace }}/results" -name "plots" -type d | head -1)
             if [ -n "$PLOTS_DIR" ] && [ -d "$PLOTS_DIR" ]; then
               cp -r "$PLOTS_DIR" "$target_dir"
               echo "Copied plots from $PLOTS_DIR to $target_dir"
@@ -226,12 +226,11 @@ jobs:
           fi
 
       - name: Generate Combined Plots
-        if: success()
+        if: success() && inputs.configuration == 'All'
         run: |
-          # Generate combined plots if multiple configurations exist
           cd website/vandv_files/${{ inputs.case_code }}
           if [ $(ls -1 | wc -l) -gt 1 ]; then
-            python3 ../../../main-repo/generate_combined_plots.py \
+            python3 "${{ env.MAIN_REPO_PATH }}/generate_combined_plots.py" \
               --case-code "${{ inputs.case_code }}" \
               --input-dir "." \
               --output-dir "combined_plots"
@@ -250,7 +249,7 @@ jobs:
           TURB_MODEL="${{ inputs.turbulence_model }}"
           CONFIG="${{ inputs.configuration }}"
 
-          BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          BASE_PATH="${{ env.MAIN_REPO_PATH }}/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
 
           if [ "$CONFIG" = "All" ]; then
             for config_dir in "$BASE_PATH"/Configuration*; do
@@ -277,7 +276,7 @@ jobs:
 
       - name: Summary
         run: |
-          echo "SU2 Validation Pipeline completed successfully!"
+          echo "SU2 Validation Pipeline completed!"
           echo "Case: ${{ inputs.category }}/${{ inputs.case_code }} - ${{ inputs.case_name }}"
           echo "Configuration: ${{ inputs.turbulence_model }}/${{ inputs.configuration }}"
           echo "Author: ${{ inputs.author_name }}"
