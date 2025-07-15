@@ -109,7 +109,7 @@ jobs:
 
       - name: Verify SU2 installation
         run: |
-          SU2_CFD --version
+          SU2_CFD --help
 
       - name: Process Configurations
         run: |
