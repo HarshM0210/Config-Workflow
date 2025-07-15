@@ -53,7 +53,7 @@ jobs:
         with:
           repository: HarshM0210/VandV
           path: vandv-repo
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Checkout SU2 Official Repo
         uses: actions/checkout@v4
@@ -139,7 +139,7 @@ jobs:
         if: success()
         run: |
           # Clone results repo
-          git clone https://${{ secrets.PAT_TOKEN }}@github.com/HarshM0210/Results.git website
+          git clone https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website
           cd website
 
           git config user.name "GitHub Actions"
