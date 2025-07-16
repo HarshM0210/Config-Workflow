@@ -6,40 +6,40 @@ import pandas as pd
 import os
 import argparse
 import sys
+from pathlib import Path
 
 def parse_arguments():
     """Parse command line arguments from the workflow"""
     parser = argparse.ArgumentParser(description='SU2 Validation Plotting')
-    parser.add_argument('--category', required=True, help='Validation case category')
-    parser.add_argument('--case-code', required=True, help='Validation case code')
+    parser.add_argument('--category', required=True, help='Validation Case Category')
+    parser.add_argument('--case-code', required=True, help='Validation Case Code')
     parser.add_argument('--turbulence-model', required=True, help='Turbulence model')
     parser.add_argument('--configuration', required=True, help='Configuration name')
     parser.add_argument('--main-path', required=True, help='Main repository path')
     args = parser.parse_args()
     
-    # Validate paths exist
-    if not os.path.exists(args.main_path):
-        raise ValueError(f"Main path does not exist: {args.main_path}")
+    # Convert to Path objects and validate
+    args.main_path = Path(args.main_path).absolute()
     
-    config_path = os.path.join(args.main_path, args.category, args.case_code, 
-                             args.turbulence_model, args.configuration)
-    if not os.path.exists(config_path):
+    # Construct correct configuration path
+    config_path = args.main_path / args.configuration
+    
+    if not config_path.exists():
         raise ValueError(f"Configuration path does not exist: {config_path}")
     
     return args
 
 # Configuration - will be set based on arguments
 args = parse_arguments()
-base_dir = os.path.join(args.main_path, args.category, args.case_code, 
-                       args.turbulence_model, args.configuration)
+base_dir = Path(args.main_path) / args.configuration
 
 # Mesh directories - should be detected automatically
 def get_mesh_directories():
     """Detect mesh directories automatically"""
     mesh_dirs = []
     for item in os.listdir(base_dir):
-        item_path = os.path.join(base_dir, item)
-        if os.path.isdir(item_path) and (item.startswith(('Mesh', 'mesh')) or item.isdigit()):
+        item_path = base_dir / item
+        if item_path.is_dir() and (item.startswith(('Mesh', 'mesh')) or item.isdigit():
             mesh_dirs.append(item)
     return sorted(mesh_dirs, key=lambda x: int(''.join(filter(str.isdigit, x)) or 0))
 
@@ -57,9 +57,9 @@ x_positions_m = [x/1000 for x in x_positions_mm]
 def load_exp_data():
     """Load experimental data from the configuration directory"""
     exp_data = {}
-    exp_file = os.path.join(base_dir, "exp_data.dat")
+    exp_file = base_dir / "exp_data.dat"
     
-    if not os.path.exists(exp_file):
+    if not exp_file.exists():
         raise FileNotFoundError(f"Experimental data file not found: {exp_file}")
     
     try:
@@ -104,8 +104,8 @@ def process_simulation_data():
     # First verify at least one result exists
     has_results = False
     for mesh in mesh_dirs:
-        path = os.path.join(base_dir, mesh, "vol_solution.vtu")
-        if os.path.exists(path):
+        path = base_dir / mesh / "vol_solution.vtu"
+        if path.exists():
             has_results = True
             break
     
@@ -113,15 +113,15 @@ def process_simulation_data():
         raise FileNotFoundError(f"No simulation results found in any mesh directory under {base_dir}")
     
     for mesh in mesh_dirs:
-        path = os.path.join(base_dir, mesh, "vol_solution.vtu")
+        path = base_dir / mesh / "vol_solution.vtu"
         print(f"Processing: {path}")
         
         try:
-            if not os.path.exists(path):
+            if not path.exists():
                 print(f"Result file not found: {path}")
                 continue
                 
-            mesh_data = pv.read(path)
+            mesh_data = pv.read(str(path))
             if 'Velocity' not in mesh_data.array_names:
                 print(f"Velocity data missing in {path}")
                 continue
@@ -153,8 +153,8 @@ def process_simulation_data():
 
 def create_plots(exp_data, sim_results):
     """Generate validation plots"""
-    output_dir = "plots"
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = base_dir / "plots"
+    output_dir.mkdir(exist_ok=True)
     
     mesh_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
     exp_style = {'marker':'.', 'color':'k', 's':10, 'linewidths':1.5, 'zorder':10}
@@ -187,14 +187,13 @@ def create_plots(exp_data, sim_results):
         plt.grid(True, linestyle=':', alpha=0.5)
         plt.legend(fontsize=10, framealpha=1)
         
-        output_path = os.path.join(output_dir, f"profile_x{x_mm}mm.png")
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        output_path = output_dir / f"profile_x{x_mm}mm.png"
+        plt.savefig(str(output_path), dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Saved: {output_path}")
 
 if __name__ == "__main__":
-    print(f"Starting plotting for {args.category}/{args.case_code}/"
-          f"{args.turbulence_model}/{args.configuration}")
+    print(f"Starting plotting for {args.configuration}")
     
     print("Loading experimental data...")
     try:

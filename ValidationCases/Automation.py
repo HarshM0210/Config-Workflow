@@ -122,12 +122,10 @@ def run_plot_script(config_path, args):
     
     print(f"\nRunning Plot.py in {config_path}")
     
-    # Construct absolute path for main-path
-    absolute_main_path = str(Path(args.main_path).absolute())
-    
+    # Construct command with simplified paths
     cmd = (f"python3 Plot.py --category {args.category} --case-code {args.case_code} "
           f"--turbulence-model {args.turbulence_model} --configuration {args.configuration} "
-          f"--main-path {absolute_main_path}")
+          f"--main-path {config_path.parent}")
     
     print(f"Executing command: {cmd}")
     result = run_command(cmd, cwd=config_path)
@@ -195,7 +193,7 @@ def main():
     
     config_path = Path(args.main_path) / args.configuration
     
-    print(f"\nStarting SU2 validation for {args.category}/{args.case_code}/{args.turbulence_model}/{args.configuration}")
+    print(f"\nStarting SU2 validation for {args.configuration}")
     print(f"Absolute main path: {args.main_path}")
     print(f"Absolute VandV path: {args.vandv_path}")
     print(f"Configuration path: {config_path.absolute()}")
