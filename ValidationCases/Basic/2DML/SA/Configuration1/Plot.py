@@ -39,7 +39,7 @@ def get_mesh_directories():
     mesh_dirs = []
     for item in os.listdir(base_dir):
         item_path = base_dir / item
-        if item_path.is_dir() and (item.startswith(('Mesh', 'mesh')) or item.isdigit():
+        if item_path.is_dir() and (item.startswith(('Mesh', 'mesh')) or item.isdigit()):
             mesh_dirs.append(item)
     return sorted(mesh_dirs, key=lambda x: int(''.join(filter(str.isdigit, x)) or 0))
 
