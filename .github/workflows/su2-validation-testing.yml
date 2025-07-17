@@ -1,4 +1,4 @@
-name: SU2 Validation Pipeline
+name: SU2 Validation Cases
 
 on:
   workflow_dispatch:
@@ -10,10 +10,6 @@ on:
         options:
           - Basic
           - Extended
-      case_name:
-        description: "Validation Case Name (e.g., 2D Mixing Layer)"
-        required: true
-        type: string
       case_code:
         description: "Validation Case Code (e.g., 2DML)"
         required: true
@@ -26,14 +22,9 @@ on:
           - SA
           - SST
       configuration:
-        description: "Validation Case Configuration"
+        description: "Specific Configuration (e.g., Configuration1) or All"
         required: true
-        type: choice
-        options:
-          - Configuration1
-          - Configuration2
-          - All
-        default: Configuration1
+        type: string
       author_name:
         description: "Author Name"
         required: true
@@ -42,7 +33,8 @@ on:
 env:
   GITHUB_WORKSPACE: ${{ github.workspace }}
   MAIN_REPO_PATH: ${{ github.workspace }}/main-repo
-  VANDV_REPO_PATH: ${{ github.workspace }}/vandv-repo
+  MESH_REPO_PATH: ${{ github.workspace }}/turbmodels/Mesh_Files
+  RESTART_REPO_PATH: ${{ github.workspace }}/turbmodels/Restart_Files
 
 jobs:
   validate:
@@ -53,12 +45,10 @@ jobs:
         with:
           path: ${{ env.MAIN_REPO_PATH }}
 
-      - name: Checkout VandV Repo
-        uses: actions/checkout@v4
-        with:
-          repository: HarshM0210/VandV
-          path: ${{ env.VANDV_REPO_PATH }}
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+      - name: Download Mesh and Restart Files from Google Drive
+        run: |
+          pip install gdown
+          gdown --folder https://drive.google.com/drive/folders/0AO679eggydcDUk9PVA -O turbmodels --fuzzy
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
@@ -69,22 +59,9 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y \
-            build-essential \
-            cmake \
-            ninja-build \
-            libopenmpi-dev \
-            openmpi-bin \
-            swig \
-            libboost-all-dev \
-            libmetis-dev \
-            libparmetis-dev \
-            libhdf5-dev \
-            zlib1g-dev \
-            python3-dev \
-            python3-pip \
-            git \
-            wget \
-            libgl1
+            build-essential cmake ninja-build libopenmpi-dev openmpi-bin swig \
+            libboost-all-dev libmetis-dev libparmetis-dev libhdf5-dev zlib1g-dev \
+            python3-dev python3-pip git wget libgl1
 
       - name: Install Python dependencies
         run: |
@@ -96,20 +73,11 @@ jobs:
           git clone https://github.com/su2code/SU2.git
           cd SU2
           git checkout -b develop origin/develop
-          python meson.py build \
-            -Dwith-mpi=disabled \
-            -Denable-pywrapper=true \
-            --prefix=/usr/local
+          python meson.py build -Dwith-mpi=disabled -Denable-pywrapper=true --prefix=/usr/local
           ninja -C build
           sudo ninja -C build install
           sudo ldconfig
-          echo "SU2_CFD path: $(which SU2_CFD)"
           echo "PATH=/usr/local/bin:$PATH" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-
-      - name: Verify SU2 installation
-        run: |
-          SU2_CFD --help
 
       - name: Process Configurations
         run: |
@@ -119,50 +87,55 @@ jobs:
           CONFIG="${{ inputs.configuration }}"
           AUTHOR="${{ inputs.author_name }}"
 
-          BASE_PATH="${{ env.MAIN_REPO_PATH }}/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
-          VANDV_BASE_PATH="${{ env.VANDV_REPO_PATH }}/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          MAIN_PATH="${{ env.MAIN_REPO_PATH }}/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          MESH_SRC="${{ env.MESH_REPO_PATH }}/$CATEGORY/$CASE_CODE"
+          RESTART_SRC="${{ env.RESTART_REPO_PATH }}/$CATEGORY/$CASE_CODE/$TURB_MODEL"
 
-          # Create results directory
           mkdir -p "${{ github.workspace }}/results"
 
-          if [ "$CONFIG" = "All" ]; then
-            # Process all configurations
-            ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${AUTHOR}_All"
-            mkdir -p "${{ github.workspace }}/results/$ARTIFACT_NAME"
-            
-            for config_dir in "$BASE_PATH"/Configuration*; do
-              if [ -d "$config_dir" ]; then
-                CONFIG_NAME=$(basename "$config_dir")
-                echo "Processing $CONFIG_NAME"
-                
-                # Create config-specific result directory
-                mkdir -p "${{ github.workspace }}/results/$ARTIFACT_NAME/$CONFIG_NAME"
-                
-                # Process this configuration
-                python3 "${{ env.MAIN_REPO_PATH }}/ValidationCases/Automation.py" \
-                  --category "$CATEGORY" \
-                  --case-code "$CASE_CODE" \
-                  --turbulence-model "$TURB_MODEL" \
-                  --configuration "$CONFIG_NAME" \
-                  --vandv-path "$VANDV_BASE_PATH" \
-                  --main-path "$BASE_PATH" \
-                  --output-path "${{ github.workspace }}/results/$ARTIFACT_NAME/$CONFIG_NAME"
-              fi
+          run_config() {
+            CONF_NAME="$1"
+            ROOT_ARTIFACT="$2"
+            DEST_PATH="$MAIN_PATH/$CONF_NAME"
+
+            # Determine proper artifact folder
+            if [ -n "$ROOT_ARTIFACT" ]; then
+              ARTIFACT_DIR="${{ github.workspace }}/results/$ROOT_ARTIFACT/$CONF_NAME"
+            else
+              ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${CONF_NAME}_${AUTHOR}"
+              ARTIFACT_DIR="${{ github.workspace }}/results/$ARTIFACT_NAME"
+            fi
+
+            echo "[INFO] Processing Configuration: $CONF_NAME"
+            mkdir -p "$ARTIFACT_DIR"
+
+            for mesh in "$MESH_SRC"/*; do
+              MESH_NAME=$(basename "$mesh")
+              TARGET_DIR="$DEST_PATH/$MESH_NAME"
+
+              mkdir -p "$TARGET_DIR"
+              cp "$mesh/mesh.su2" "$TARGET_DIR/"
+              cp "$RESTART_SRC/$CONF_NAME/$MESH_NAME/restart.dat" "$TARGET_DIR/"
+              cp "$DEST_PATH/Config.cfg" "$TARGET_DIR/"
             done
-          else
-            # Process specific configuration
-            ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${CONFIG}_${AUTHOR}"
-            mkdir -p "${{ github.workspace }}/results/$ARTIFACT_NAME"
-            
-            echo "Processing $CONFIG"
+
             python3 "${{ env.MAIN_REPO_PATH }}/ValidationCases/Automation.py" \
               --category "$CATEGORY" \
               --case-code "$CASE_CODE" \
               --turbulence-model "$TURB_MODEL" \
-              --configuration "$CONFIG" \
-              --vandv-path "$VANDV_BASE_PATH" \
-              --main-path "$BASE_PATH" \
-              --output-path "${{ github.workspace }}/results/$ARTIFACT_NAME"
+              --configuration "$CONF_NAME" \
+              --main-path "$MAIN_PATH" \
+              --output-path "$ARTIFACT_DIR"
+          }
+
+          if [ "$CONFIG" = "All" ]; then
+            ROOT_ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${AUTHOR}_All"
+            for conf in "$MAIN_PATH"/Configuration*; do
+              CONF_NAME=$(basename "$conf")
+              run_config "$CONF_NAME" "$ROOT_ARTIFACT_NAME"
+            done
+          else
+            run_config "$CONFIG"
           fi
 
       - name: Upload Results as Artifacts
@@ -170,50 +143,32 @@ jobs:
         with:
           name: ${{ inputs.category }}_${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration == 'All' && format('{0}_All', inputs.author_name) || format('{0}_{1}', inputs.configuration, inputs.author_name) }}
           path: ${{ github.workspace }}/results/
-          retention-days: 7
 
       - name: Deploy to Results Website
-        if: success()
         run: |
-          # Clone results repo
-          git clone "https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git" website
+          git clone https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website
           cd website
 
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-          # Create branch name
-          BRANCH_NAME="${{ inputs.case_code }}_${{ inputs.author_name }}"
-          git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME"
+          BRANCH="${{ inputs.case_code }}_${{ inputs.author_name }}"
+          git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
 
-          # Create directory structure
-          mkdir -p "vandv_files/${{ inputs.case_code }}"
+          mkdir -p vandv_files/${{ inputs.case_code }}
 
-          # Copy plot folders
           if [ "${{ inputs.configuration }}" = "All" ]; then
-            # Copy all configuration plot folders
-            find "${{ github.workspace }}/results" -name "plots" -type d | while read plot_dir; do
-              config_name=$(basename $(dirname "$plot_dir"))
-              target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${config_name}"
-              rm -rf "$target_dir"
-              cp -r "$plot_dir" "$target_dir"
+            find "${{ github.workspace }}/results" -name plots -type d | while read plot_dir; do
+              config=$(basename $(dirname "$plot_dir"))
+              dest="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${config}"
+              rm -rf "$dest"
+              cp -r "$plot_dir" "$dest"
             done
           else
-            # Copy single configuration plot folder
-            target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration }}"
-            rm -rf "$target_dir"
-            
-            # Find plots directory in results
-            PLOTS_DIR=$(find "${{ github.workspace }}/results" -name "plots" -type d | head -1)
-            if [ -n "$PLOTS_DIR" ] && [ -d "$PLOTS_DIR" ]; then
-              cp -r "$PLOTS_DIR" "$target_dir"
-              echo "Copied plots from $PLOTS_DIR to $target_dir"
-            else
-              echo "No plots directory found in results"
-              # Create empty target directory to ensure branch creation
-              mkdir -p "$target_dir"
-              echo "No plots available" > "$target_dir/README.txt"
-            fi
+            plot_dir=$(find "${{ github.workspace }}/results" -name plots -type d | head -1)
+            dest="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration }}"
+            rm -rf "$dest"
+            cp -r "$plot_dir" "$dest"
           fi
 
           # Commit and push if there are changes
@@ -223,21 +178,6 @@ jobs:
             git push origin "$BRANCH_NAME" --force
           else
             echo "No changes to commit"
-          fi
-
-      - name: Generate Combined Plots
-        if: success() && inputs.configuration == 'All'
-        run: |
-          cd website/vandv_files/${{ inputs.case_code }}
-          if [ $(ls -1 | wc -l) -gt 1 ]; then
-            python3 "${{ env.MAIN_REPO_PATH }}/generate_combined_plots.py" \
-              --case-code "${{ inputs.case_code }}" \
-              --input-dir "." \
-              --output-dir "combined_plots"
-            
-            git add .
-            git commit -m "Add combined plots for ${{ inputs.case_code }}" || true
-            git push origin "${{ inputs.case_code }}_${{ inputs.author_name }}" || true
           fi
 
       - name: Cleanup

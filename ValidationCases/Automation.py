@@ -1,241 +1,76 @@
-#!/usr/bin/env python3
-"""
-SU2 Validation Automation Script
-Runs SU2 simulations on all meshes in a validation case configuration
-"""
-
 import os
-import sys
-import argparse
 import subprocess
-import shutil
-import time
-from pathlib import Path
+import argparse
 
-def run_command(cmd, cwd=None):
-    """Run a shell command and return the result"""
-    try:
-        result = subprocess.run(cmd, shell=True, cwd=cwd, 
-                              capture_output=True, text=True, check=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        print(f"Command failed: {cmd}")
-        print(f"Exit code: {e.returncode}")
-        print(f"Error output:\n{e.stderr}")
-        print(f"Standard output:\n{e.stdout}")
-        return None
 
-def copy_files_from_vandv(vandv_path, main_path, config_name):
-    """Copy mesh and restart files from VandV repo to main repo"""
-    vandv_config_path = Path(vandv_path) / config_name
-    main_config_path = Path(main_path) / config_name
-    
-    if not vandv_config_path.exists():
-        print(f"VandV path not found: {vandv_config_path}")
-        return False
-    
-    if not main_config_path.exists():
-        main_config_path.mkdir(parents=True, exist_ok=True)
-        print(f"Created main config path: {main_config_path}")
-    
-    # Find all mesh folders in VandV repo
-    for mesh_folder in vandv_config_path.iterdir():
-        if mesh_folder.is_dir():
-            target_mesh_folder = main_config_path / mesh_folder.name
-            target_mesh_folder.mkdir(exist_ok=True)
-            
-            print(f"Copying files to {target_mesh_folder}")
-            
-            # Copy restart file
-            restart_files = list(mesh_folder.glob("*.dat"))
-            for restart_file in restart_files:
-                shutil.copy2(restart_file, target_mesh_folder)
-                print(f"  Copied {restart_file.name}")
-            
-            # Copy mesh file
-            mesh_files = list(mesh_folder.glob("*.su2"))
-            for mesh_file in mesh_files:
-                shutil.copy2(mesh_file, target_mesh_folder)
-                print(f"  Copied {mesh_file.name}")
-    
-    return True
-
-def copy_config_to_meshes(config_path, mesh_folders):
-    """Copy configuration file to all mesh folders"""
-    config_file = config_path / "Config.cfg"
-    
-    if not config_file.exists():
-        print(f"Config file not found: {config_file}")
-        return False
-    
-    for mesh_folder in mesh_folders:
-        if mesh_folder.is_dir():
-            target_config = mesh_folder / "Config.cfg"
-            try:
-                shutil.copy2(config_file, target_config)
-                if not target_config.exists():
-                    print(f"Error: Failed to copy config to {mesh_folder.name}")
-                    return False
-                print(f"Successfully copied config to {mesh_folder.name}")
-            except Exception as e:
-                print(f"Error copying config to {mesh_folder.name}: {str(e)}")
-                return False
-    
-    time.sleep(1)
-    return True
-
-def run_su2_simulation(mesh_folder):
-    """Run SU2 simulation in a mesh folder"""
-    config_file = mesh_folder / "Config.cfg"
-    
-    if not config_file.exists():
-        print(f"Config file not found at: {config_file.absolute()}")
-        return False
-    
-    print(f"\nRunning SU2 simulation in {mesh_folder.name}")
-    print(f"Using config file: {config_file.absolute()}")
-    
-    cmd = "SU2_CFD Config.cfg"
-    result = run_command(cmd, cwd=mesh_folder)
-    
-    if result is not None:
-        history_file = mesh_folder / "history.csv"
-        solution_file = mesh_folder / "vol_solution.vtu"
-        
-        if history_file.exists() and solution_file.exists():
-            print(f"  Simulation completed successfully for {mesh_folder.name}")
-            return True
+def run_su2_simulation(mesh_dir):
+    cfg_path = os.path.join(mesh_dir, "Config.cfg")
+    if os.path.exists(cfg_path):
+        print(f"\n[INFO] Running SU2_CFD in: {mesh_dir}")
+        result = subprocess.run(["SU2_CFD", cfg_path], cwd=mesh_dir)
+        if result.returncode != 0:
+            print(f"[ERROR] SU2_CFD failed in {mesh_dir}")
         else:
-            print(f"  Simulation completed but results missing for {mesh_folder.name}")
-            return False
+            print(f"[INFO] SU2_CFD finished successfully in {mesh_dir}")
     else:
-        print(f"  Simulation failed for {mesh_folder.name}")
-        return False
+        print(f"[WARNING] Config.cfg not found in {mesh_dir}, skipping...\n")
 
-def run_plot_script(config_path, args):
-    """Run Plot.py script to generate validation plots"""
-    plot_script = config_path / "Plot.py"
-    
-    if not plot_script.exists():
-        print(f"Plot.py not found in {config_path}")
-        return False
-    
-    print(f"\nRunning Plot.py in {config_path}")
-    
-    # Construct command with simplified paths
-    cmd = (f"python3 Plot.py --category {args.category} --case-code {args.case_code} "
-          f"--turbulence-model {args.turbulence_model} --configuration {args.configuration} "
-          f"--main-path {config_path.parent}")
-    
-    print(f"Executing command: {cmd}")
-    result = run_command(cmd, cwd=config_path)
-    
-    if result is not None:
-        plots_dir = config_path / "plots"
-        if plots_dir.exists() and any(plots_dir.iterdir()):
-            print("  Plots generated successfully")
-            return True
+
+def run_plot_script(config_path):
+    plot_script = os.path.join(config_path, "Plot.py")
+    if os.path.exists(plot_script):
+        print(f"\n[INFO] Running Plot.py in: {config_path}")
+        result = subprocess.run(["python3", plot_script], cwd=config_path)
+        if result.returncode != 0:
+            print(f"[ERROR] Plot.py failed in {config_path}")
         else:
-            print("  Plot script ran but no plots were generated")
-            return False
+            print(f"[INFO] Plot.py executed successfully in {config_path}")
     else:
-        print("  Plot generation failed")
-        return False
+        print(f"[WARNING] Plot.py not found in {config_path}, skipping...\n")
 
-def collect_results(config_path, output_path):
-    """Collect all results and organize them"""
-    output_dir = Path(output_path)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    mesh_folders = [d for d in config_path.iterdir() if d.is_dir() and d.name.startswith(('Mesh', 'mesh', '1', '2', '3', '4', '5'))]
-    
-    for i, mesh_folder in enumerate(mesh_folders, 1):
-        mesh_result_dir = output_dir / f"Mesh{i}"
-        mesh_result_dir.mkdir(exist_ok=True)
-        
-        for pattern in ['*.csv', '*.vtu', '*.cfg', '*.dat', '*.su2']:
-            for file in mesh_folder.glob(pattern):
-                try:
-                    shutil.copy2(file, mesh_result_dir)
-                    print(f"Copied {file.name} to {mesh_result_dir}")
-                except Exception as e:
-                    print(f"Error copying {file}: {str(e)}")
-        
-        print(f"Collected results from {mesh_folder.name}")
-    
-    plots_dir = config_path / "plots"
-    if plots_dir.exists():
-        target_plots_dir = output_dir / "plots"
-        if target_plots_dir.exists():
-            shutil.rmtree(target_plots_dir)
-        try:
-            shutil.copytree(plots_dir, target_plots_dir)
-            print("Successfully collected plots")
-        except Exception as e:
-            print(f"Error copying plots: {str(e)}")
+
+def get_mesh_folders(config_path):
+    mesh_dirs = []
+    for entry in os.listdir(config_path):
+        full_path = os.path.join(config_path, entry)
+        if os.path.isdir(full_path) and not entry.startswith('.'):
+            mesh_dirs.append(full_path)
+    return mesh_dirs
+
+
+def process_configuration(main_path, configuration):
+    config_path = os.path.join(main_path, configuration)
+    print(f"\n[INFO] Processing configuration at: {config_path}")
+    mesh_dirs = get_mesh_folders(config_path)
+    if not mesh_dirs:
+        print(f"[WARNING] No mesh directories found in {config_path}\n")
+        return
+
+    for mesh_dir in mesh_dirs:
+        run_su2_simulation(mesh_dir)
+
+    run_plot_script(config_path)
+
 
 def main():
-    parser = argparse.ArgumentParser(description='SU2 Validation Automation')
-    parser.add_argument('--category', required=True, help='Validation case category')
-    parser.add_argument('--case-code', required=True, help='Validation case code')
-    parser.add_argument('--turbulence-model', required=True, help='Turbulence model')
-    parser.add_argument('--configuration', required=True, help='Configuration name')
-    parser.add_argument('--vandv-path', required=True, help='VandV repository path')
-    parser.add_argument('--main-path', required=True, help='Main repository path')
-    parser.add_argument('--output-path', required=True, help='Output path for results')
-    
+    parser = argparse.ArgumentParser(description="Automate SU2 simulation and plotting")
+    parser.add_argument('--category', required=True, help='Validation category (e.g., Basic or Extended)')
+    parser.add_argument('--case-code', required=True, help='Case code (e.g., 2DML)')
+    parser.add_argument('--turbulence-model', required=True, help='Turbulence model (e.g., SA or SST)')
+    parser.add_argument('--configuration', required=True, help='Specific Configuration (e.g., Configuration1) or All')
+    parser.add_argument('--main-path', required=True, help='Path to base directory inside ValidationCases')
+    parser.add_argument('--output-path', required=False, help='Optional path to store outputs')
+
     args = parser.parse_args()
-    
-    # Convert all paths to absolute
-    args.vandv_path = str(Path(args.vandv_path).absolute())
-    args.main_path = str(Path(args.main_path).absolute())
-    args.output_path = str(Path(args.output_path).absolute())
-    
-    config_path = Path(args.main_path) / args.configuration
-    
-    print(f"\nStarting SU2 validation for {args.configuration}")
-    print(f"Absolute main path: {args.main_path}")
-    print(f"Absolute VandV path: {args.vandv_path}")
-    print(f"Configuration path: {config_path.absolute()}")
-    
-    # Step 1: Copy files from VandV repo
-    print("\nStep 1: Copying files from VandV repository...")
-    if not copy_files_from_vandv(args.vandv_path, args.main_path, args.configuration):
-        print("Failed to copy files from VandV repository")
-        return 1
-    
-    # Step 2: Copy config to mesh folders
-    print("\nStep 2: Copying configuration to mesh folders...")
-    mesh_folders = [d for d in config_path.iterdir() if d.is_dir() and d.name.startswith(('Mesh', 'mesh', '1', '2', '3', '4', '5'))]
-    if not mesh_folders:
-        print("Error: No mesh directories found")
-        return 1
-        
-    if not copy_config_to_meshes(config_path, mesh_folders):
-        print("Failed to copy configuration files")
-        return 1
-    
-    # Step 3: Run SU2 simulations
-    print("\nStep 3: Running SU2 simulations...")
-    simulation_success = True
-    for mesh_folder in mesh_folders:
-        if not run_su2_simulation(mesh_folder):
-            simulation_success = False
-    
-    # Step 4: Generate plots
-    print("\nStep 4: Generating plots...")
-    if simulation_success:
-        if not run_plot_script(config_path, args):
-            print("Plot generation failed")
+
+    if args.configuration == "All":
+        for entry in os.listdir(args.main_path):
+            config_path = os.path.join(args.main_path, entry)
+            if os.path.isdir(config_path) and entry.startswith("Configuration"):
+                process_configuration(args.main_path, entry)
     else:
-        print("Skipping plot generation due to failed simulations")
-    
-    # Step 5: Collect results
-    print("\nStep 5: Collecting results...")
-    collect_results(config_path, args.output_path)
-    
-    print("\nSU2 validation automation completed!")
-    return 0 if simulation_success else 2
+        process_configuration(args.main_path, args.configuration)
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
