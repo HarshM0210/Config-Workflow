@@ -1,4 +1,4 @@
-name: SU2 Validation Cases
+name: SU2 Validation Pipeline
 
 on:
   workflow_dispatch:
@@ -30,12 +30,6 @@ on:
         required: true
         type: string
 
-env:
-  GITHUB_WORKSPACE: ${{ github.workspace }}
-  MAIN_REPO_PATH: ${{ github.workspace }}/main-repo
-  MESH_REPO_PATH: ${{ github.workspace }}/turbmodels/Mesh_Files
-  RESTART_REPO_PATH: ${{ github.workspace }}/turbmodels/Restart_Files
-
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -43,7 +37,7 @@ jobs:
       - name: Checkout Main Repo
         uses: actions/checkout@v4
         with:
-          path: ${{ env.MAIN_REPO_PATH }}
+          path: main-repo
 
       - name: Download Mesh and Restart Files from Google Drive
         run: |
@@ -87,95 +81,110 @@ jobs:
           CONFIG="${{ inputs.configuration }}"
           AUTHOR="${{ inputs.author_name }}"
 
-          MAIN_PATH="${{ env.MAIN_REPO_PATH }}/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
-          MESH_SRC="${{ env.MESH_REPO_PATH }}/$CATEGORY/$CASE_CODE"
-          RESTART_SRC="${{ env.RESTART_REPO_PATH }}/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          MESH_BASE_PATH="turbmodels/Mesh_Files/$CATEGORY/$CASE_CODE"
+          RESTART_BASE_PATH="turbmodels/Restart_Files/$CATEGORY/$CASE_CODE/$TURB_MODEL"
 
-          mkdir -p "${{ github.workspace }}/results"
+          # Create results directory
+          mkdir -p results
 
-          run_config() {
-            CONF_NAME="$1"
-            ROOT_ARTIFACT="$2"
-            DEST_PATH="$MAIN_PATH/$CONF_NAME"
-
-            # Determine proper artifact folder
-            if [ -n "$ROOT_ARTIFACT" ]; then
-              ARTIFACT_DIR="${{ github.workspace }}/results/$ROOT_ARTIFACT/$CONF_NAME"
-            else
-              ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${CONF_NAME}_${AUTHOR}"
-              ARTIFACT_DIR="${{ github.workspace }}/results/$ARTIFACT_NAME"
-            fi
-
-            echo "[INFO] Processing Configuration: $CONF_NAME"
-            mkdir -p "$ARTIFACT_DIR"
-
-            for mesh in "$MESH_SRC"/*; do
-              MESH_NAME=$(basename "$mesh")
-              TARGET_DIR="$DEST_PATH/$MESH_NAME"
-
-              mkdir -p "$TARGET_DIR"
-              cp "$mesh/mesh.su2" "$TARGET_DIR/"
-              cp "$RESTART_SRC/$CONF_NAME/$MESH_NAME/restart.dat" "$TARGET_DIR/"
-              cp "$DEST_PATH/Config.cfg" "$TARGET_DIR/"
+          if [ "$CONFIG" = "All" ]; then
+            # Process all configurations
+            ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${AUTHOR}_All"
+            mkdir -p "results/$ARTIFACT_NAME"
+            
+            for config_dir in "$BASE_PATH"/Configuration*; do
+              if [ -d "$config_dir" ]; then
+                CONFIG_NAME=$(basename "$config_dir")
+                echo "Processing $CONFIG_NAME"
+                
+                # Create config-specific result directory
+                mkdir -p "results/$ARTIFACT_NAME/$CONFIG_NAME"
+                
+                # Process this configuration
+                python3 main-repo/ValidationCases/Automation.py \
+                  --category "$CATEGORY" \
+                  --case-code "$CASE_CODE" \
+                  --turbulence-model "$TURB_MODEL" \
+                  --configuration "$CONFIG_NAME" \
+                  --mesh-path "$MESH_BASE_PATH" \
+                  --restart-path "$RESTART_BASE_PATH" \
+                  --main-path "$BASE_PATH" \
+                  --output-path "results/$ARTIFACT_NAME/$CONFIG_NAME"
+              fi
             done
-
-            python3 "${{ env.MAIN_REPO_PATH }}/ValidationCases/Automation.py" \
+          else
+            # Process specific configuration
+            ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${CONFIG}_${AUTHOR}"
+            mkdir -p "results/$ARTIFACT_NAME"
+            
+            echo "Processing $CONFIG"
+            python3 main-repo/ValidationCases/Automation.py \
               --category "$CATEGORY" \
               --case-code "$CASE_CODE" \
               --turbulence-model "$TURB_MODEL" \
-              --configuration "$CONF_NAME" \
-              --main-path "$MAIN_PATH" \
-              --output-path "$ARTIFACT_DIR"
-          }
-
-          if [ "$CONFIG" = "All" ]; then
-            ROOT_ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${AUTHOR}_All"
-            for conf in "$MAIN_PATH"/Configuration*; do
-              CONF_NAME=$(basename "$conf")
-              run_config "$CONF_NAME" "$ROOT_ARTIFACT_NAME"
-            done
-          else
-            run_config "$CONFIG"
+              --configuration "$CONFIG" \
+              --mesh-path "$MESH_BASE_PATH" \
+              --restart-path "$RESTART_BASE_PATH" \
+              --main-path "$BASE_PATH" \
+              --output-path "results/$ARTIFACT_NAME"
           fi
 
       - name: Upload Results as Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.category }}_${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration == 'All' && format('{0}_All', inputs.author_name) || format('{0}_{1}', inputs.configuration, inputs.author_name) }}
-          path: ${{ github.workspace }}/results/
+          path: results/
 
       - name: Deploy to Results Website
+        if: success()
         run: |
+          # Clone results repo
           git clone https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website
           cd website
 
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-          BRANCH="${{ inputs.case_code }}_${{ inputs.author_name }}"
-          git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
+          # Create branch name
+          BRANCH_NAME="${{ inputs.case_code }}_${{ inputs.author_name }}"
+          git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME"
 
-          mkdir -p vandv_files/${{ inputs.case_code }}
+          # Create directory structure
+          mkdir -p "vandv_files/${{ inputs.case_code }}"
 
+          # Copy plot folders
           if [ "${{ inputs.configuration }}" = "All" ]; then
-            find "${{ github.workspace }}/results" -name plots -type d | while read plot_dir; do
-              config=$(basename $(dirname "$plot_dir"))
-              dest="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${config}"
-              rm -rf "$dest"
-              cp -r "$plot_dir" "$dest"
+            # Copy all configuration plot folders
+            find ../results -name "plots" -type d | while read plot_dir; do
+              config_name=$(basename $(dirname "$plot_dir"))
+              target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${config_name}"
+              rm -rf "$target_dir"
+              cp -r "$plot_dir" "$target_dir"
             done
           else
-            plot_dir=$(find "${{ github.workspace }}/results" -name plots -type d | head -1)
-            dest="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration }}"
-            rm -rf "$dest"
-            cp -r "$plot_dir" "$dest"
+            # Copy single configuration plot folder
+            target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration }}"
+            rm -rf "$target_dir"
+            
+            # Find plots directory in results
+            PLOTS_DIR=$(find ../results -name "plots" -type d | head -1)
+            if [ -n "$PLOTS_DIR" ] && [ -d "$PLOTS_DIR" ]; then
+              cp -r "$PLOTS_DIR" "$target_dir"
+              echo "Copied plots from $PLOTS_DIR to $target_dir"
+            else
+              echo "No plots directory found in results"
+              # Create empty target directory to ensure branch creation
+              mkdir -p "$target_dir"
+              echo "No plots available" > "$target_dir/README.txt"
+            fi
           fi
 
           # Commit and push if there are changes
           if [ -n "$(git status --porcelain)" ]; then
             git add .
             git commit -m "Update validation results for ${{ inputs.case_code }} by ${{ inputs.author_name }}"
-            git push origin "$BRANCH_NAME" --force
+            git push origin "$BRANCH_NAME"
           else
             echo "No changes to commit"
           fi
@@ -189,7 +198,7 @@ jobs:
           TURB_MODEL="${{ inputs.turbulence_model }}"
           CONFIG="${{ inputs.configuration }}"
 
-          BASE_PATH="${{ env.MAIN_REPO_PATH }}/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
 
           if [ "$CONFIG" = "All" ]; then
             for config_dir in "$BASE_PATH"/Configuration*; do
@@ -216,7 +225,7 @@ jobs:
 
       - name: Summary
         run: |
-          echo "SU2 Validation Pipeline completed!"
+          echo "SU2 Validation Pipeline completed successfully!"
           echo "Case: ${{ inputs.category }}/${{ inputs.case_code }} - ${{ inputs.case_name }}"
           echo "Configuration: ${{ inputs.turbulence_model }}/${{ inputs.configuration }}"
           echo "Author: ${{ inputs.author_name }}"
