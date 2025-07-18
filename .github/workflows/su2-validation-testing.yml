@@ -48,7 +48,7 @@ jobs:
       - name: Download Mesh and Restart Files from Google Drive
         run: |
           pip install gdown
-          gdown --folder https://drive.google.com/drive/folders/0AO679eggydcDUk9PVA -O turbmodels --fuzzy
+          gdown --folder https://drive.google.com/drive/folders/1z6kSNo4Y62idDN3zTWsugMJhOEdpLt2r?usp=sharing -O turbmodels --fuzzy
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
