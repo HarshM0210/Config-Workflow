@@ -159,17 +159,23 @@ jobs:
             find ../results -name "plots" -type d | while read plot_dir; do
               config_name=$(basename $(dirname "$plot_dir"))
               target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${config_name}"
-              rm -rf "$target_dir"
+              if [ -d "$target_dir" ]; then
+                echo "Overwriting existing results at $target_dir"
+                rm -rf "$target_dir"
+              fi
               cp -r "$plot_dir" "$target_dir"
             done
           else
             # Copy single configuration plot folder
             target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration }}"
-            rm -rf "$target_dir"
             
             # Find plots directory in results
             PLOTS_DIR=$(find ../results -name "plots" -type d | head -1)
             if [ -n "$PLOTS_DIR" ] && [ -d "$PLOTS_DIR" ]; then
+              if [ -d "$target_dir" ]; then
+                echo "Overwriting existing results at $target_dir"
+                rm -rf "$target_dir"
+              fi
               cp -r "$PLOTS_DIR" "$target_dir"
               echo "Copied plots from $PLOTS_DIR to $target_dir"
             else
