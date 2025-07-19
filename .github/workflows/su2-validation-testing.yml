@@ -184,7 +184,7 @@ jobs:
           if [ -n "$(git status --porcelain)" ]; then
             git add .
             git commit -m "Update validation results for ${{ inputs.case_code }} by ${{ inputs.author_name }}"
-            git push origin "$BRANCH_NAME"
+            git push --force origin "$BRANCH_NAME"
           else
             echo "No changes to commit"
           fi
