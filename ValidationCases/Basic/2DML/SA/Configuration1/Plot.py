@@ -6,6 +6,9 @@ import os
 import sys
 from pathlib import Path
 
+# Define delta_omega at module level so it's accessible everywhere
+DELTA_OMEGA = {1:5.236, 50:8.8583, 200:13.771, 650:35.894, 950:50.547}
+
 def load_exp_data(config_path):
     exp_data = {}
     exp_file = config_path / "Exp_data.dat"
@@ -27,21 +30,28 @@ def load_exp_data(config_path):
                     exp_data[current_x] = pd.DataFrame(current_data, 
                                                      columns=["Y_mm", "U_m_s", "U_norm"])
                 try:
-                    current_x = int(float(line.split('"')[-2].split('=')[-1].replace('mm','')))
-                except:
+                    # More robust x-position extraction
+                    x_str = line.split('"')[-2].split('=')[-1].replace('mm','').strip()
+                    current_x = int(float(x_str))
+                except Exception as e:
+                    print(f"Warning: Couldn't parse x-position from line: {line}")
                     continue
                 current_data = []
             elif "VARIABLES" not in line:
                 try:
                     parts = list(map(float, line.split()))
                     if len(parts) >= 5:
-                        current_data.append([parts[1], parts[2], parts[4]])
+                        # Store all relevant data points
+                        current_data.append({
+                            "Y_mm": parts[1],
+                            "U_m_s": parts[2],
+                            "U_norm": parts[4]
+                        })
                 except ValueError:
                     continue
         
         if current_x is not None and current_data:
-            exp_data[current_x] = pd.DataFrame(current_data, 
-                                             columns=["Y_mm", "U_m_s", "U_norm"])
+            exp_data[current_x] = pd.DataFrame(current_data)
             
         print(f"Loaded experimental data for x-positions: {list(exp_data.keys())}")
         return exp_data
@@ -54,7 +64,6 @@ def process_simulation_data(config_path, mesh_dirs):
     results = {}
     x_positions_mm = [1, 50, 200, 650, 950]
     x_positions_m = [x/1000 for x in x_positions_mm]
-    delta_omega = {1:5.236, 50:8.8583, 200:13.771, 650:35.894, 950:50.547}
     
     for mesh in mesh_dirs:
         path = config_path / mesh / "vol_solution.vtu"
@@ -81,8 +90,8 @@ def process_simulation_data(config_path, mesh_dirs):
                     pointb=(x_m, 0.05, 0),
                     resolution=300
                 )
-                y_vals = profile.points[:, 1] * 1000
-                y_norm = y_vals / delta_omega[x_mm]
+                y_vals = profile.points[:, 1] * 1000  # Convert to mm
+                y_norm = y_vals / DELTA_OMEGA[x_mm]
                 u_norm = profile['U_norm']
                 
                 results[mesh][x_mm] = {
@@ -100,13 +109,14 @@ def create_plots(exp_data, sim_results, output_dir):
     mesh_dirs = list(sim_results.keys())
     x_positions_mm = [1, 50, 200, 650, 950]
     mesh_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-    exp_style = {'marker':'.', 'color':'k', 's':10, 'linewidths':1.5, 'zorder':10}
+    exp_style = {'marker':'o', 'color':'k', 's':20, 'linewidths':1, 'zorder':10, 'facecolors':'none'}
     
     os.makedirs(output_dir, exist_ok=True)
     
     for x_mm in x_positions_mm:
         plt.figure(figsize=(10, 6))
         
+        # Plot simulation results first
         for mesh, color in zip(mesh_dirs, mesh_colors):
             if mesh in sim_results and x_mm in sim_results[mesh]:
                 data = sim_results[mesh][x_mm]
@@ -116,16 +126,21 @@ def create_plots(exp_data, sim_results, output_dir):
                         linewidth=2,
                         alpha=0.8)
         
-        if exp_data and x_mm in exp_data:
+        # Plot experimental data on top
+        if exp_data is not None and x_mm in exp_data:
             exp_df = exp_data[x_mm]
+            print(f"Experimental data points for x={x_mm}mm:\n{exp_df}")
+            
             plt.scatter(exp_df['U_norm'], 
-                       exp_df['Y_mm']/delta_omega[x_mm],
+                       exp_df['Y_mm']/DELTA_OMEGA[x_mm],
                        label='Experimental',
                        **exp_style)
+        else:
+            print(f"Warning: No experimental data for x={x_mm}mm")
         
         plt.xlabel(r"$(U-U_1)/\Delta U$", fontsize=12)
         plt.ylabel(r"$y/\delta_\omega$", fontsize=12)
-        plt.title(f"Mixing Layer Profile at x = {x_mm} mm")
+        plt.title(f"Mixing Layer Profile at x = {x_mm} mm", fontsize=14)
         plt.grid(True, linestyle=':', alpha=0.5)
         plt.legend(fontsize=10, framealpha=1)
         
@@ -149,14 +164,16 @@ if __name__ == "__main__":
             print("Error: No mesh directories found")
             sys.exit(1)
             
-        # Load experimental data
-        print("Loading experimental data...")
+        # Load experimental data with more verbose logging
+        print("\nLoading experimental data...")
         exp_data = load_exp_data(config_path)
         if exp_data is None:
             print("Warning: Could not load experimental data, will proceed without it")
+        else:
+            print("Successfully loaded experimental data")
         
         # Process simulation data
-        print("Processing simulation data...")
+        print("\nProcessing simulation data...")
         sim_results = process_simulation_data(config_path, mesh_dirs)
         if not sim_results:
             print("Error: No simulation data processed")
@@ -165,8 +182,8 @@ if __name__ == "__main__":
         # Create plots directory
         plots_dir = config_path / "plots"
         
-        # Generate plots
-        print("Generating plots...")
+        # Generate plots with more verbose logging
+        print("\nGenerating plots...")
         create_plots(exp_data, sim_results, plots_dir)
         
         print("\nAll plots generated successfully!")
