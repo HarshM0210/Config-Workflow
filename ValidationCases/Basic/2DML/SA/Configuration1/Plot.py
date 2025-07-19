@@ -11,7 +11,7 @@ DELTA_OMEGA = {1:5.236, 50:8.8583, 200:13.771, 650:35.894, 950:50.547}
 
 def load_exp_data(config_path):
     exp_data = {}
-    exp_file = config_path / "Exp_data.dat"
+    exp_file = config_path / "exp_data.dat"
     
     if not exp_file.exists():
         print(f"Error: Experimental data file not found at {exp_file}")
