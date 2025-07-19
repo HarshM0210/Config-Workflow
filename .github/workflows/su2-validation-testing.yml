@@ -139,16 +139,22 @@ jobs:
       - name: Deploy to Results Website
         if: success()
         run: |
-          # Clone results repo
+          # Clone and checkout existing branch if it exists, or create new
+          BRANCH_NAME="${{ inputs.case_code }}_${{ inputs.author_name }}"
+          git clone --branch "$BRANCH_NAME" --single-branch https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website || \
           git clone https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website
           cd website
 
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-          # Create branch name
-          BRANCH_NAME="${{ inputs.case_code }}_${{ inputs.author_name }}"
-          git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME"
+          # If branch doesn't exist, create it
+          if ! git rev-parse --verify "$BRANCH_NAME" >/dev/null 2>&1; then
+            git checkout -b "$BRANCH_NAME"
+          else
+            git checkout "$BRANCH_NAME"
+            git pull origin "$BRANCH_NAME" --rebase
+          fi
 
           # Create directory structure
           mkdir -p "vandv_files/${{ inputs.case_code }}"
