@@ -1,5 +1,8 @@
 name: SU2 Validation Pipeline
 
+env:
+  SU2_CACHE_KEY: ${{ runner.os }}-su2-${{ hashFiles('SU2/meson.build') }}-v1
+
 on:
   workflow_dispatch:
     inputs:
@@ -61,6 +64,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install numpy matplotlib pyvista pandas
+
+      - name: Cache SU2 build
+        id: cache-su2
+        uses: actions/cache@v4
+        with:
+          path: |
+            SU2/build
+            /usr/local/bin/SU2_*
+            /usr/local/include/su2
+            /usr/local/lib/libsu2*
+            /usr/local/lib/python*/site-packages/su2
+          key: ${{ env.SU2_CACHE_KEY }}
 
       - name: Install SU2
         run: |
