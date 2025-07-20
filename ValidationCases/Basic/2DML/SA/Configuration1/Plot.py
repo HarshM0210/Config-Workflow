@@ -140,7 +140,7 @@ def create_plots(exp_data, sim_results, output_dir):
         
         plt.xlabel(r"$(U-U_1)/\Delta U$", fontsize=12)
         plt.ylabel(r"$y/\delta_\omega$", fontsize=12)
-        plt.title(f"Mixing Layer Profile at x = {x_mm} mm", fontsize=14)
+        plt.title(f"Mixing Layer Profile at x = {x_mm} mm For SA Model", fontsize=14)
         plt.grid(True, linestyle=':', alpha=0.5)
         plt.legend(fontsize=10, framealpha=1)
         
