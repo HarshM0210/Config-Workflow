@@ -33,13 +33,17 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    env:
-      SU2_CACHE_KEY: su2-${{ hashFiles('SU2/meson.build') }}-v1
     steps:
       - name: Checkout Main Repo
         uses: actions/checkout@v4
         with:
           path: main-repo
+
+      - name: Set up cache key
+        id: set-cache-key
+        run: |
+          echo "HASH=$(git hash-object SU2/meson.build)" >> $GITHUB_OUTPUT
+          echo "CACHE_KEY=su2-${{ steps.set-cache-key.outputs.HASH }}-v1" >> $GITHUB_OUTPUT
 
       - name: Download Mesh and Restart Files from Google Drive
         run: |
@@ -74,7 +78,7 @@ jobs:
             /usr/local/include/su2
             /usr/local/lib/libsu2*
             /usr/local/lib/python*/site-packages/su2
-          key: ${{ env.SU2_CACHE_KEY }}
+          key: ${{ steps.set-cache-key.outputs.CACHE_KEY }}
 
       - name: Install SU2
         run: |
