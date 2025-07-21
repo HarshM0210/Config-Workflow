@@ -1,4 +1,4 @@
-name: SU2 Validation Pipeline
+name: Run SU2 Validation Cases
 
 env:
   SU2_CACHE_KEY: ${{ runner.os }}-su2-${{ hashFiles('SU2/meson.build') }}-v1
