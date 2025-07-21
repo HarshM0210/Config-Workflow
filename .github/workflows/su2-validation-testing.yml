@@ -39,12 +39,6 @@ jobs:
         with:
           path: main-repo
 
-      - name: Set up cache key
-        id: set-cache-key
-        run: |
-          echo "HASH=$(git hash-object SU2/meson.build)" >> $GITHUB_OUTPUT
-          echo "CACHE_KEY=su2-${{ steps.set-cache-key.outputs.HASH }}-v1" >> $GITHUB_OUTPUT
-
       - name: Download Mesh and Restart Files from Google Drive
         run: |
           pip install gdown
@@ -78,10 +72,16 @@ jobs:
             /usr/local/include/su2
             /usr/local/lib/libsu2*
             /usr/local/lib/python*/site-packages/su2
-          key: ${{ steps.set-cache-key.outputs.CACHE_KEY }}
+          key: ${{ runner.os }}-su2-${{ hashFiles('main-repo/SU2/meson.build') }}-v1
 
-      - name: Install SU2
+      - name: Install SU2 (if cache miss)
+        if: steps.cache-su2.outputs.cache-hit != 'true'
         run: |
+          # Only clean if we're doing a fresh install
+          if [ -d "SU2" ]; then
+            rm -rf SU2
+          fi
+
           git clone https://github.com/su2code/SU2.git
           cd SU2
           git checkout -b develop origin/develop
