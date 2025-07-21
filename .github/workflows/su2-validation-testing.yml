@@ -29,7 +29,7 @@ on:
         required: true
         type: string
       author_name:
-        description: "Author Name"
+        description: "Author's Name"
         required: true
         type: string
 
