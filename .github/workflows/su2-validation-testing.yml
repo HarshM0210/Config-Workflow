@@ -3,6 +3,10 @@ name: Run SU2 Validation Cases
 on:
   workflow_dispatch:
     inputs:
+      branch_name:
+        description: "SU2 Branch To Check Out (e.g., master, develop)"
+        required: true
+        type: string
       category:
         description: "Validation Case Category"
         required: true
@@ -10,10 +14,15 @@ on:
         options:
           - Basic
           - Extended
+          - All
       case_code:
         description: "Validation Case Code (e.g., 2DML)"
         required: true
-        type: string
+        type: choice
+        options:
+          - 2DML
+          - ASBL
+          - All
       turbulence_model:
         description: "Turbulence Model"
         required: true
@@ -21,6 +30,7 @@ on:
         options:
           - SA
           - SST
+          - All
       configuration:
         description: "Specific Configuration (e.g., Configuration1) or All"
         required: true
@@ -39,17 +49,17 @@ jobs:
         with:
           path: main-repo
 
-      - name: Download Mesh and Restart Files from Google Drive
+      - name: Download Mesh And Restart Files From Google Drive
         run: |
           pip install gdown
           gdown --folder https://drive.google.com/drive/folders/1z6kSNo4Y62idDN3zTWsugMJhOEdpLt2r?usp=sharing -O turbmodels --fuzzy
 
-      - name: Set up Python 3.11
+      - name: Set Up Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
 
-      - name: Install system dependencies
+      - name: Install System Dependencies
         run: |
           sudo apt update
           sudo apt install -y \
@@ -57,41 +67,36 @@ jobs:
             libboost-all-dev libmetis-dev libparmetis-dev libhdf5-dev zlib1g-dev \
             python3-dev python3-pip git wget libgl1
 
-      - name: Install Python dependencies
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install numpy matplotlib pyvista pandas
 
-      - name: Cache SU2 build
-        id: cache-su2
-        uses: actions/cache@v4
-        with:
-          path: |
-            SU2/build
-            /usr/local/bin/SU2_*
-            /usr/local/include/su2
-            /usr/local/lib/libsu2*
-            /usr/local/lib/python*/site-packages/su2
-          key: ${{ runner.os }}-su2-${{ hashFiles('main-repo/SU2/meson.build') }}-v1
-
-      - name: Install SU2 (if cache miss)
-        if: steps.cache-su2.outputs.cache-hit != 'true'
+      - name: Install SU2
         run: |
-          # Only clean if we're doing a fresh install
-          if [ -d "SU2" ]; then
-            rm -rf SU2
-          fi
-
           git clone https://github.com/su2code/SU2.git
           cd SU2
-          git checkout -b develop origin/develop
+          if git show-ref --quiet refs/remotes/origin/${{ inputs.branch_name }}; then
+            git checkout -b ${{ inputs.branch_name }} origin/${{ inputs.branch_name }}
+          else
+            echo "::error::Branch ${{ inputs.branch_name }} not found in SU2 repository"
+            exit 1
+          fi
           python meson.py build -Dwith-mpi=disabled -Denable-pywrapper=true --prefix=/usr/local
           ninja -C build
           sudo ninja -C build install
           sudo ldconfig
           echo "PATH=/usr/local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Process Configurations
+      - name: Validate Inputs
+        run: |
+          if [ "${{ inputs.category }}" == "All" ] && [ "${{ inputs.case_code }}" != "All" ]; then
+            echo "::error::Cannot specify 'All' category with specific case_code"
+            exit 1
+          fi
+
+      - name: Process All Validation Cases
+        if: ${{ inputs.category == 'All' && inputs.case_code == 'All' }}
         run: |
           CATEGORY="${{ inputs.category }}"
           CASE_CODE="${{ inputs.case_code }}"
@@ -99,66 +104,387 @@ jobs:
           CONFIG="${{ inputs.configuration }}"
           AUTHOR="${{ inputs.author_name }}"
 
-          BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
-          MESH_BASE_PATH="turbmodels/Mesh_Files/$CATEGORY/$CASE_CODE"
-          RESTART_BASE_PATH="turbmodels/Restart_Files/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          # Create results directory
+          mkdir -p results
+
+          BASE_PATH_MAIN="main-repo/ValidationCases"
+
+          ARTIFACT_NAME="ValidationCases_${AUTHOR}"
+          mkdir -p "results/$ARTIFACT_NAME"
+
+          for category_dir in "$BASE_PATH_MAIN"/*/; do
+            if [ -d "$category_dir" ] && [[ "$(basename "$category_dir")" != .* ]]; then
+              category_name=$(basename "$category_dir")
+              echo "Processing category: $category_name"
+
+              mkdir -p "results/$ARTIFACT_NAME/$category_name"
+              BASE_PATH="main-repo/ValidationCases/$category_name"
+              
+              for case_dir in "$BASE_PATH"/*/; do
+                if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
+                  case_name=$(basename "$case_dir")
+                  echo "Processing folder: $case_name"
+
+                  mkdir -p "results/$ARTIFACT_NAME/$category_name/$case_name"
+
+                  if [ "$TURB_MODEL" = "All" ]; then
+                    BASE_PATH_CASE="main-repo/ValidationCases/$category_name/$case_name"
+
+                    for turb_dir in "$BASE_PATH_CASE"/*/; do
+                      if [ -d "$turb_dir" ] && [[ "$(basename "$turb_dir")" != .* ]]; then
+                        turb_name=$(basename "$turb_dir")
+                        echo "Processing folder: $turb_name"
+
+                        mkdir -p "results/$ARTIFACT_NAME/$category_name/$case_name/$turb_name"
+
+                        BASE_PATH_TURB="main-repo/ValidationCases/$category_name/$case_name/$turb_name"
+                        MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$category_name/$case_name"
+                        RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$category_name/$case_name/$turb_name"
+
+                        if [ "$CONFIG" = "All" ]; then
+                          # Process all configurations
+                          
+                          for config_dir in "$BASE_PATH_TURB"/Configuration*; do
+                            if [ -d "$config_dir" ]; then
+                              CONFIG_NAME=$(basename "$config_dir")
+                              echo "Processing $CONFIG_NAME"
+                              
+                              # Create config-specific result directory
+                              mkdir -p "results/$ARTIFACT_NAME/$category_name/$case_name/$turb_name/$CONFIG_NAME"
+
+                              # Process this configuration
+                              python3 main-repo/ValidationCases/Automation.py \
+                                --category "$category_name" \
+                                --case-code "$case_name" \
+                                --turbulence-model "$turb_name" \
+                                --configuration "$CONFIG_NAME" \
+                                --mesh-path "$MESH_BASE_PATH" \
+                                --restart-path "$RESTART_BASE_PATH" \
+                                --main-path "$BASE_PATH_TURB" \
+                                --output-path "results/$ARTIFACT_NAME/$category_name/$case_name/$turb_name/$CONFIG_NAME"
+                            fi
+                          done
+                        else
+                          # Process specific configuration
+                          mkdir -p "results/$ARTIFACT_NAME/$category_name/$case_name/$turb_name/$CONFIG"
+
+                          echo "Processing $CONFIG"
+                          python3 main-repo/ValidationCases/Automation.py \
+                            --category "$category_name" \
+                            --case-code "$case_name" \
+                            --turbulence-model "$turb_name" \
+                            --configuration "$CONFIG" \
+                            --mesh-path "$MESH_BASE_PATH" \
+                            --restart-path "$RESTART_BASE_PATH" \
+                            --main-path "$BASE_PATH_TURB" \
+                            --output-path "results/$ARTIFACT_NAME/$category_name/$case_name/$turb_name/$CONFIG"
+                        fi
+                      fi
+                    done
+
+                  else
+                    BASE_PATH_CASE="main-repo/ValidationCases/$category_name/$case_name/$TURB_MODEL"
+                    MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$category_name/$case_name"
+                    RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$category_name/$case_name/$TURB_MODEL"
+
+                    if [ "$CONFIG" = "All" ]; then
+                      # Process all configurations
+                      mkdir -p "results/$ARTIFACT_NAME/$category_name/$case_name/$TURB_MODEL"
+                      
+                      for config_dir in "$BASE_PATH_CASE"/Configuration*; do
+                        if [ -d "$config_dir" ]; then
+                          CONFIG_NAME=$(basename "$config_dir")
+                          echo "Processing $CONFIG_NAME"
+                          
+                          # Create config-specific result directory
+                          mkdir -p "results/$ARTIFACT_NAME/$category_name/$case_name/$TURB_MODEL/$CONFIG_NAME"
+                          
+                          # Process this configuration
+                          python3 main-repo/ValidationCases/Automation.py \
+                            --category "$category_name" \
+                            --case-code "$case_name" \
+                            --turbulence-model "$TURB_MODEL" \
+                            --configuration "$CONFIG_NAME" \
+                            --mesh-path "$MESH_BASE_PATH" \
+                            --restart-path "$RESTART_BASE_PATH" \
+                            --main-path "$BASE_PATH_CASE" \
+                            --output-path "results/$ARTIFACT_NAME/$category_name/$case_name/$TURB_MODEL/$CONFIG_NAME"
+                        fi
+                      done
+                    else
+                      # Process specific configuration
+                      mkdir -p "results/$ARTIFACT_NAME/$category_name/$case_name/$TURB_MODEL/$CONFIG"
+
+                      echo "Processing $CONFIG"
+                      python3 main-repo/ValidationCases/Automation.py \
+                        --category "$category_name" \
+                        --case-code "$case_name" \
+                        --turbulence-model "$TURB_MODEL" \
+                        --configuration "$CONFIG" \
+                        --mesh-path "$MESH_BASE_PATH" \
+                        --restart-path "$RESTART_BASE_PATH" \
+                        --main-path "$BASE_PATH_CASE" \
+                        --output-path "results/$ARTIFACT_NAME/$category_name/$case_name/$TURB_MODEL/$CONFIG"
+                    fi
+                  fi
+                fi
+              done
+            fi
+          done
+
+      - name: Process Specific Category
+        if: ${{ inputs.category != 'All' && inputs.case_code == 'All' }}
+        run: |
+          CATEGORY="${{ inputs.category }}"
+          CASE_CODE="${{ inputs.case_code }}"
+          TURB_MODEL="${{ inputs.turbulence_model }}"
+          CONFIG="${{ inputs.configuration }}"
+          AUTHOR="${{ inputs.author_name }}"
 
           # Create results directory
           mkdir -p results
 
-          if [ "$CONFIG" = "All" ]; then
-            # Process all configurations
-            ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${AUTHOR}_All"
-            mkdir -p "results/$ARTIFACT_NAME"
-            
-            for config_dir in "$BASE_PATH"/Configuration*; do
-              if [ -d "$config_dir" ]; then
-                CONFIG_NAME=$(basename "$config_dir")
-                echo "Processing $CONFIG_NAME"
-                
-                # Create config-specific result directory
-                mkdir -p "results/$ARTIFACT_NAME/$CONFIG_NAME"
-                
-                # Process this configuration
-                python3 main-repo/ValidationCases/Automation.py \
-                  --category "$CATEGORY" \
-                  --case-code "$CASE_CODE" \
-                  --turbulence-model "$TURB_MODEL" \
-                  --configuration "$CONFIG_NAME" \
-                  --mesh-path "$MESH_BASE_PATH" \
-                  --restart-path "$RESTART_BASE_PATH" \
-                  --main-path "$BASE_PATH" \
-                  --output-path "results/$ARTIFACT_NAME/$CONFIG_NAME"
+          BASE_PATH="main-repo/ValidationCases/$CATEGORY"
+
+          ARTIFACT_NAME="ValidationCases_${AUTHOR}"
+          mkdir -p "results/$ARTIFACT_NAME"
+
+          for case_dir in "$BASE_PATH"/*/; do
+            if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
+              case_name=$(basename "$case_dir")
+              echo "Processing folder: $case_name"
+
+              mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$case_name"
+
+              if [ "$TURB_MODEL" = "All" ]; then
+                BASE_PATH_CASE="main-repo/ValidationCases/$CATEGORY/$case_name"
+
+                for turb_dir in "$BASE_PATH_CASE"/*/; do
+                  if [ -d "$turb_dir" ] && [[ "$(basename "$turb_dir")" != .* ]]; then
+                    turb_name=$(basename "$turb_dir")
+                    echo "Processing folder: $turb_name"
+
+                    mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$turb_name"
+
+                    BASE_PATH_TURB="main-repo/ValidationCases/$CATEGORY/$case_name/$turb_name"
+                    MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$CATEGORY/$case_name"
+                    RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$CATEGORY/$case_name/$turb_name"
+
+                    if [ "$CONFIG" = "All" ]; then
+                      # Process all configurations
+                      
+                      for config_dir in "$BASE_PATH_TURB"/Configuration*; do
+                        if [ -d "$config_dir" ]; then
+                          CONFIG_NAME=$(basename "$config_dir")
+                          echo "Processing $CONFIG_NAME"
+                          
+                          # Create config-specific result directory
+                          mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$turb_name/$CONFIG_NAME"
+
+                          # Process this configuration
+                          python3 main-repo/ValidationCases/Automation.py \
+                            --category "$CATEGORY" \
+                            --case-code "$case_name" \
+                            --turbulence-model "$turb_name" \
+                            --configuration "$CONFIG_NAME" \
+                            --mesh-path "$MESH_BASE_PATH" \
+                            --restart-path "$RESTART_BASE_PATH" \
+                            --main-path "$BASE_PATH_TURB" \
+                            --output-path "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$turb_name/$CONFIG_NAME"
+                        fi
+                      done
+                    else
+                      # Process specific configuration
+                      mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$turb_name/$CONFIG"
+
+                      echo "Processing $CONFIG"
+                      python3 main-repo/ValidationCases/Automation.py \
+                        --category "$CATEGORY" \
+                        --case-code "$case_name" \
+                        --turbulence-model "$turb_name" \
+                        --configuration "$CONFIG" \
+                        --mesh-path "$MESH_BASE_PATH" \
+                        --restart-path "$RESTART_BASE_PATH" \
+                        --main-path "$BASE_PATH_TURB" \
+                        --output-path "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$turb_name/$CONFIG"
+                    fi
+                  fi
+                done
+
+              else
+                BASE_PATH_CASE="main-repo/ValidationCases/$CATEGORY/$case_name/$TURB_MODEL"
+                MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$CATEGORY/$case_name"
+                RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$CATEGORY/$case_name/$TURB_MODEL"
+
+                if [ "$CONFIG" = "All" ]; then
+                  # Process all configurations
+                  mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$TURB_MODEL"
+                  
+                  for config_dir in "$BASE_PATH_CASE"/Configuration*; do
+                    if [ -d "$config_dir" ]; then
+                      CONFIG_NAME=$(basename "$config_dir")
+                      echo "Processing $CONFIG_NAME"
+                      
+                      # Create config-specific result directory
+                      mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$TURB_MODEL/$CONFIG_NAME"
+
+                      # Process this configuration
+                      python3 main-repo/ValidationCases/Automation.py \
+                        --category "$CATEGORY" \
+                        --case-code "$case_name" \
+                        --turbulence-model "$TURB_MODEL" \
+                        --configuration "$CONFIG_NAME" \
+                        --mesh-path "$MESH_BASE_PATH" \
+                        --restart-path "$RESTART_BASE_PATH" \
+                        --main-path "$BASE_PATH_CASE" \
+                        --output-path "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$TURB_MODEL/$CONFIG_NAME"
+                    fi
+                  done
+                else
+                  # Process specific configuration
+                  mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$TURB_MODEL/$CONFIG"
+
+                  echo "Processing $CONFIG"
+                  python3 main-repo/ValidationCases/Automation.py \
+                    --category "$CATEGORY" \
+                    --case-code "$case_name" \
+                    --turbulence-model "$TURB_MODEL" \
+                    --configuration "$CONFIG" \
+                    --mesh-path "$MESH_BASE_PATH" \
+                    --restart-path "$RESTART_BASE_PATH" \
+                    --main-path "$BASE_PATH_CASE" \
+                    --output-path "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$TURB_MODEL/$CONFIG"
+                fi
+              fi
+            fi
+          done
+
+      - name: Process Specific Validation Case
+        if: ${{ inputs.category != 'All' && inputs.case_code != 'All' }}
+        run: |
+          CATEGORY="${{ inputs.category }}"
+          CASE_CODE="${{ inputs.case_code }}"
+          TURB_MODEL="${{ inputs.turbulence_model }}"
+          CONFIG="${{ inputs.configuration }}"
+          AUTHOR="${{ inputs.author_name }}"
+
+          # Create results directory
+          mkdir -p results
+
+          ARTIFACT_NAME="ValidationCases_${AUTHOR}"
+          mkdir -p "results/$ARTIFACT_NAME"
+
+          if [ "$TURB_MODEL" = "All" ]; then
+            BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE"
+
+            for turb_dir in "$BASE_PATH"/*/; do
+              if [ -d "$turb_dir" ] && [[ "$(basename "$turb_dir")" != .* ]]; then
+                turb_name=$(basename "$turb_dir")
+                echo "Processing folder: $turb_name"
+
+                mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$turb_name"
+
+                BASE_PATH_TURB="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$turb_name"
+                MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$CATEGORY/$CASE_CODE"
+                RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$CATEGORY/$CASE_CODE/$turb_name"
+
+                if [ "$CONFIG" = "All" ]; then
+                  # Process all configurations
+                  
+                  for config_dir in "$BASE_PATH_TURB"/Configuration*; do
+                    if [ -d "$config_dir" ]; then
+                      CONFIG_NAME=$(basename "$config_dir")
+                      echo "Processing $CONFIG_NAME"
+                      
+                      # Create config-specific result directory
+                      mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$turb_name/$CONFIG_NAME"
+
+                      # Process this configuration
+                      python3 main-repo/ValidationCases/Automation.py \
+                        --category "$CATEGORY" \
+                        --case-code "$CASE_CODE" \
+                        --turbulence-model "$turb_name" \
+                        --configuration "$CONFIG_NAME" \
+                        --mesh-path "$MESH_BASE_PATH" \
+                        --restart-path "$RESTART_BASE_PATH" \
+                        --main-path "$BASE_PATH_TURB" \
+                        --output-path "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$turb_name/$CONFIG_NAME"
+                    fi
+                  done
+                else
+                  # Process specific configuration
+                  mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$turb_name/$CONFIG"
+
+                  echo "Processing $CONFIG"
+                  python3 main-repo/ValidationCases/Automation.py \
+                    --category "$CATEGORY" \
+                    --case-code "$CASE_CODE" \
+                    --turbulence-model "$turb_name" \
+                    --configuration "$CONFIG" \
+                    --mesh-path "$MESH_BASE_PATH" \
+                    --restart-path "$RESTART_BASE_PATH" \
+                    --main-path "$BASE_PATH_TURB" \
+                    --output-path "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$turb_name/$CONFIG"
+                fi
               fi
             done
+
           else
-            # Process specific configuration
-            ARTIFACT_NAME="${CATEGORY}_${CASE_CODE}_${TURB_MODEL}_${CONFIG}_${AUTHOR}"
-            mkdir -p "results/$ARTIFACT_NAME"
-            
-            echo "Processing $CONFIG"
-            python3 main-repo/ValidationCases/Automation.py \
-              --category "$CATEGORY" \
-              --case-code "$CASE_CODE" \
-              --turbulence-model "$TURB_MODEL" \
-              --configuration "$CONFIG" \
-              --mesh-path "$MESH_BASE_PATH" \
-              --restart-path "$RESTART_BASE_PATH" \
-              --main-path "$BASE_PATH" \
-              --output-path "results/$ARTIFACT_NAME"
+            BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+            MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$CATEGORY/$CASE_CODE"
+            RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+
+            if [ "$CONFIG" = "All" ]; then
+              # Process all configurations
+              
+              for config_dir in "$BASE_PATH"/Configuration*; do
+                if [ -d "$config_dir" ]; then
+                  CONFIG_NAME=$(basename "$config_dir")
+                  echo "Processing $CONFIG_NAME"
+                  
+                  # Create config-specific result directory
+                  mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$TURB_MODEL/$CONFIG_NAME"
+                  
+                  # Process this configuration
+                  python3 main-repo/ValidationCases/Automation.py \
+                    --category "$CATEGORY" \
+                    --case-code "$CASE_CODE" \
+                    --turbulence-model "$TURB_MODEL" \
+                    --configuration "$CONFIG_NAME" \
+                    --mesh-path "$MESH_BASE_PATH" \
+                    --restart-path "$RESTART_BASE_PATH" \
+                    --main-path "$BASE_PATH" \
+                    --output-path "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$TURB_MODEL/$CONFIG_NAME"
+                fi
+              done
+            else
+              mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$TURB_MODEL/$CONFIG"
+              
+              echo "Processing $CONFIG"
+              python3 main-repo/ValidationCases/Automation.py \
+                --category "$CATEGORY" \
+                --case-code "$CASE_CODE" \
+                --turbulence-model "$TURB_MODEL" \
+                --configuration "$CONFIG" \
+                --mesh-path "$MESH_BASE_PATH" \
+                --restart-path "$RESTART_BASE_PATH" \
+                --main-path "$BASE_PATH" \
+                --output-path "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$TURB_MODEL/$CONFIG"
+            fi
           fi
 
       - name: Upload Results as Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.category }}_${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration == 'All' && format('{0}_All', inputs.author_name) || format('{0}_{1}', inputs.configuration, inputs.author_name) }}
+          name: "ValidationCases_${{ inputs.author_name }}"
           path: results/
+          retention-days: 7
 
       - name: Deploy to Results Website
         if: success()
         run: |
           # Clone and checkout existing branch if it exists, or create new
-          BRANCH_NAME="${{ inputs.case_code }}_${{ inputs.author_name }}"
+          BRANCH_NAME="ValidationCases_${{inputs.branch_name}}_${{ inputs.author_name }}"
           git clone --branch "$BRANCH_NAME" --single-branch https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website || \
           git clone https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website
           cd website
@@ -174,46 +500,53 @@ jobs:
             git pull origin "$BRANCH_NAME" --rebase
           fi
 
-          # Create directory structure
-          mkdir -p "vandv_files/${{ inputs.case_code }}"
-
-          # Copy plot folders
-          if [ "${{ inputs.configuration }}" = "All" ]; then
-            # Copy all configuration plot folders
-            find ../results -name "plots" -type d | while read plot_dir; do
-              config_name=$(basename $(dirname "$plot_dir"))
-              target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${config_name}"
-              if [ -d "$target_dir" ]; then
-                echo "Overwriting existing results at $target_dir"
-                rm -rf "$target_dir"
-              fi
-              cp -r "$plot_dir" "$target_dir"
-            done
-          else
-            # Copy single configuration plot folder
-            target_dir="vandv_files/${{ inputs.case_code }}/${{ inputs.case_code }}_${{ inputs.turbulence_model }}_${{ inputs.configuration }}"
-            
-            # Find plots directory in results
-            PLOTS_DIR=$(find ../results -name "plots" -type d | head -1)
-            if [ -n "$PLOTS_DIR" ] && [ -d "$PLOTS_DIR" ]; then
-              if [ -d "$target_dir" ]; then
-                echo "Overwriting existing results at $target_dir"
-                rm -rf "$target_dir"
-              fi
-              cp -r "$PLOTS_DIR" "$target_dir"
-              echo "Copied plots from $PLOTS_DIR to $target_dir"
-            else
-              echo "No plots directory found in results"
-              # Create empty target directory to ensure branch creation
-              mkdir -p "$target_dir"
-              echo "No plots available" > "$target_dir/README.txt"
-            fi
+          # Create directory structure in the website repo
+          if [ "${{ inputs.category }}" = "All" ] && [ "${{ inputs.case_code }}" = "All" ]; then
+            BASE_PATH="../ValidationCases"
+            for category_dir in "$BASE_PATH"/*/; do
+                if [ -d "$category_dir" ] && [[ "$(basename "$category_dir")" != .* ]]; then
+                    for case_dir in "$category_dir"/*/; do
+                        if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
+                            case_name=$(basename "$case_dir")
+                            # Create directory in results/vandv_files/
+                            mkdir -p "vandv_files/$case_name"
+                        fi
+                    done
+                fi
+            done    
           fi
+
+          if [ "${{ inputs.category }}" != "All" ] && [ "${{ inputs.case_code }}" = "All" ]; then
+            BASE_PATH="../ValidationCases/${{ inputs.category }}"
+            for case_dir in "$BASE_PATH"/*/; do
+              if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
+                  case_name=$(basename "$case_dir")
+                  mkdir -p "vandv_files/$case_name"
+              fi
+            done
+          fi
+
+          if [ "${{ inputs.category }}" != "All" ] && [ "${{ inputs.case_code }}" != "All" ]; then
+            mkdir -p "vandv_files/${{ inputs.case_code }}"
+          fi
+            
+          # Copy plot folders
+          find ../results -name "plots" -type d | while read plot_dir; do
+            config_name=$(basename $(dirname "${plot_dir%/}"))
+            turb_name=$(basename $(dirname $(dirname "${plot_dir%/}")))
+            case_name=$(basename $(dirname $(dirname $(dirname "${plot_dir%/}"))))
+            target_dir="vandv_files/${case_name}/${case_name}_${turb_name}_${config_name}"
+            if [ -d "$target_dir" ]; then
+              echo "Overwriting existing results at $target_dir"
+              rm -rf "$target_dir"
+            fi
+            cp -r "$plot_dir" "$target_dir"
+          done
 
           # Commit and push if there are changes
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Update validation results for ${{ inputs.case_code }} by ${{ inputs.author_name }}"
+            git commit -m "Update validation results"
             git push --force origin "$BRANCH_NAME"
           else
             echo "No changes to commit"
@@ -222,41 +555,23 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          # Clean up mesh folders in main repo
-          CATEGORY="${{ inputs.category }}"
-          CASE_CODE="${{ inputs.case_code }}"
-          TURB_MODEL="${{ inputs.turbulence_model }}"
-          CONFIG="${{ inputs.configuration }}"
+          BASE_PATH="main-repo/ValidationCases"
 
-          BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+          find "$BASE_PATH" \
+            -type d \
+            -path "*/Configuration*" \
+            ! -path "*/.*" \
+            -exec sh -c '
+            for config_dir do
+              find "$config_dir" \
+              \( -name "*.csv" -o -name "*.vtu" -o -name "*.dat" -o -name "*.su2" -o -name "Config.cfg" \) \
+              -delete 2>/dev/null
+            done  
+            ' sh {} +
 
-          if [ "$CONFIG" = "All" ]; then
-            for config_dir in "$BASE_PATH"/Configuration*; do
-              if [ -d "$config_dir" ]; then
-                find "$config_dir" -name "*.csv" -delete 2>/dev/null || true
-                find "$config_dir" -name "*.vtu" -delete 2>/dev/null || true
-                find "$config_dir" -name "*.dat" -delete 2>/dev/null || true
-                find "$config_dir" -name "*.su2" -delete 2>/dev/null || true
-                find "$config_dir" -name "Config.cfg" -delete 2>/dev/null || true
-              fi
-            done
-          else
-            CONFIG_PATH="$BASE_PATH/$CONFIG"
-            if [ -d "$CONFIG_PATH" ]; then
-              find "$CONFIG_PATH" -name "*.csv" -delete 2>/dev/null || true
-              find "$CONFIG_PATH" -name "*.vtu" -delete 2>/dev/null || true
-              find "$CONFIG_PATH" -name "*.dat" -delete 2>/dev/null || true
-              find "$CONFIG_PATH" -name "*.su2" -delete 2>/dev/null || true
-              find "$CONFIG_PATH" -name "Config.cfg" -delete 2>/dev/null || true
-            fi
-          fi
-
-          echo "Cleanup completed - mesh folders restored to original state"
+          echo "Cleanup completed - All mesh folders restored to original state"
 
       - name: Summary
         run: |
-          echo "SU2 Validation Pipeline completed successfully!"
-          echo "Case: ${{ inputs.category }}/${{ inputs.case_code }} - ${{ inputs.case_name }}"
-          echo "Configuration: ${{ inputs.turbulence_model }}/${{ inputs.configuration }}"
+          echo "SU2 Validation Pipeline Completed Successfully!"
           echo "Author: ${{ inputs.author_name }}"
-          echo "Results deployed to: ${{ inputs.case_code }}_${{ inputs.author_name }} branch"
