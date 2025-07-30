@@ -138,8 +138,8 @@ jobs:
                         mkdir -p "results/$ARTIFACT_NAME/$category_name/$case_name/$turb_name"
 
                         BASE_PATH_TURB="main-repo/ValidationCases/$category_name/$case_name/$turb_name"
-                        MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$category_name/$case_name"
-                        RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$category_name/$case_name/$turb_name"
+                        MESH_BASE_PATH="turbmodels/Mesh_Files/$category_name/$case_name"
+                        RESTART_BASE_PATH="turbmodels/Restart_Files/$category_name/$case_name/$turb_name"
 
                         if [ "$CONFIG" = "All" ]; then
                           # Process all configurations
@@ -184,8 +184,8 @@ jobs:
 
                   else
                     BASE_PATH_CASE="main-repo/ValidationCases/$category_name/$case_name/$TURB_MODEL"
-                    MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$category_name/$case_name"
-                    RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$category_name/$case_name/$TURB_MODEL"
+                    MESH_BASE_PATH="turbmodels/Mesh_Files/$category_name/$case_name"
+                    RESTART_BASE_PATH="turbmodels/Restart_Files/$category_name/$case_name/$TURB_MODEL"
 
                     if [ "$CONFIG" = "All" ]; then
                       # Process all configurations
@@ -267,8 +267,8 @@ jobs:
                     mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$case_name/$turb_name"
 
                     BASE_PATH_TURB="main-repo/ValidationCases/$CATEGORY/$case_name/$turb_name"
-                    MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$CATEGORY/$case_name"
-                    RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$CATEGORY/$case_name/$turb_name"
+                    MESH_BASE_PATH="turbmodels/Mesh_Files/$CATEGORY/$case_name"
+                    RESTART_BASE_PATH="turbmodels/Restart_Files/$CATEGORY/$case_name/$turb_name"
 
                     if [ "$CONFIG" = "All" ]; then
                       # Process all configurations
@@ -313,8 +313,8 @@ jobs:
 
               else
                 BASE_PATH_CASE="main-repo/ValidationCases/$CATEGORY/$case_name/$TURB_MODEL"
-                MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$CATEGORY/$case_name"
-                RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$CATEGORY/$case_name/$TURB_MODEL"
+                MESH_BASE_PATH="turbmodels/Mesh_Files/$CATEGORY/$case_name"
+                RESTART_BASE_PATH="turbmodels/Restart_Files/$CATEGORY/$case_name/$TURB_MODEL"
 
                 if [ "$CONFIG" = "All" ]; then
                   # Process all configurations
@@ -385,8 +385,8 @@ jobs:
                 mkdir -p "results/$ARTIFACT_NAME/$CATEGORY/$CASE_CODE/$turb_name"
 
                 BASE_PATH_TURB="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$turb_name"
-                MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$CATEGORY/$CASE_CODE"
-                RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$CATEGORY/$CASE_CODE/$turb_name"
+                MESH_BASE_PATH="turbmodels/Mesh_Files/$CATEGORY/$CASE_CODE"
+                RESTART_BASE_PATH="turbmodels/Restart_Files/$CATEGORY/$CASE_CODE/$turb_name"
 
                 if [ "$CONFIG" = "All" ]; then
                   # Process all configurations
@@ -431,8 +431,8 @@ jobs:
 
           else
             BASE_PATH="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
-            MESH_BASE_PATH="main-repo/turbmodels/Mesh_Files/$CATEGORY/$CASE_CODE"
-            RESTART_BASE_PATH="main-repo/turbmodels/Restart_Files/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+            MESH_BASE_PATH="turbmodels/Mesh_Files/$CATEGORY/$CASE_CODE"
+            RESTART_BASE_PATH="turbmodels/Restart_Files/$CATEGORY/$CASE_CODE/$TURB_MODEL"
 
             if [ "$CONFIG" = "All" ]; then
               # Process all configurations
