@@ -32,7 +32,7 @@ on:
           - SST
           - All
       configuration:
-        description: "Specific Configuration (e.g., Configuration1) or All"
+        description: "Specific Configuration (e.g., Configuration1 or All)"
         required: true
         type: string
       author_name:
@@ -40,10 +40,56 @@ on:
         required: true
         type: string
 
+env:
+  SANITIZED_AUTHOR: "Automated_Update"
+  SANITIZED_CONFIGURATION: ""
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate Inputs
+        run: |
+          if [ "${{ github.event.inputs.category }}" == "All" ] && [ "${{ github.event.inputs.case_code }}" != "All" ]; then
+            echo "::error::Invalid Combination: 'All' category cannot be paired with a specific case code (${{ github.event.inputs.case_code }})"
+            exit 1
+          fi
+
+      - name: Sanitize Author's Name
+        run: |
+          SANITIZED=$(echo "${{ github.event.inputs.author_name }}" | 
+            tr -d '\n' |                # Remove newlines
+            tr ' ' '_' |                # Convert spaces
+            tr -s '_' |                 # Collapse multiple ____
+            sed 's/^_\+//; s/_\+$//' |  # Trim leading/trailing _
+            tr -dc '[:alnum:]_' |       # Strict character set
+            head -c 50)
+
+          # Fallback Conditions
+          if [[ -z "$SANITIZED" || "$SANITIZED" =~ ^[0-9_]+$ ]]; then
+            SANITIZED="Automated_Update"
+          fi
+          echo "SANITIZED_AUTHOR=${SANITIZED}" >> $GITHUB_ENV
+
+      - name: Validate And Sanitize Configuration Input
+        run: |
+          CONFIGURATION="${{ github.event.inputs.configuration }}"
+          CONFIG=$(echo "$CONFIGURATION" | xargs | head -c 20)
+
+          # Validate and standardize format
+          if [[ "$CONFIG" =~ ^[Cc]onfiguration[0-9]{1,4}$ ]]; then
+            NUMBER=$(echo "$CONFIG" | grep -oE '[1-9][0-9]*')
+            SANITIZED="Configuration$NUMBER"
+          elif [[ "${CONFIG,,}" == "all" ]]; then
+            SANITIZED="All"
+          else
+            echo "::error::Invalid configuration. Must be 'All' or 'ConfigurationX' (where X is a number)"
+            exit 1
+          fi
+          SANITIZED_CONFIG=$(echo "$SANITIZED" | tr -dc '[:alnum:]')
+
+          echo "SANITIZED_CONFIGURATION=$SANITIZED_CONFIG" >> $GITHUB_ENV
+
       - name: Checkout Main Repo
         uses: actions/checkout@v4
         with:
@@ -59,15 +105,49 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install System Dependencies
+      - name: Cache APT Packages
+        id: cache-apt
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-base-packages-v2
+          restore-keys: |
+            ${{ runner.os }}-apt-base-packages-
+
+      - name: Install System Dependencies (If Cache Miss)
+        if: steps.cache-apt.outputs.cache-hit != 'true'
         run: |
           sudo apt update
           sudo apt install -y \
-            build-essential cmake ninja-build libopenmpi-dev openmpi-bin swig \
-            libboost-all-dev libmetis-dev libparmetis-dev libhdf5-dev zlib1g-dev \
-            python3-dev python3-pip git wget libgl1
+            build-essential \
+            cmake \
+            ninja-build \
+            libopenmpi-dev \
+            openmpi-bin \
+            swig \
+            libboost-all-dev \
+            libmetis-dev \
+            libparmetis-dev \
+            libhdf5-dev \
+            zlib1g-dev \
+            python3-dev \
+            python3-pip \
+            git \
+            wget \
+            libgl1
+          sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Install Python Dependencies
+      - name: Cache Python Dependencies
+        id: cache-pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-numpy-matplotlib-pyvista-pandas-v1
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python Dependencies (If Cache Miss)
+        if: steps.cache-pip.outputs.cache-hit != 'true'
         run: |
           python -m pip install --upgrade pip
           pip install numpy matplotlib pyvista pandas
@@ -76,10 +156,10 @@ jobs:
         run: |
           git clone https://github.com/su2code/SU2.git
           cd SU2
-          if git show-ref --quiet refs/remotes/origin/${{ inputs.branch_name }}; then
-            git checkout -b ${{ inputs.branch_name }} origin/${{ inputs.branch_name }}
+          if git show-ref --quiet refs/remotes/origin/${{ github.event.inputs.branch_name }}; then
+            git checkout -b ${{ github.event.inputs.branch_name }} origin/${{ github.event.inputs.branch_name }}
           else
-            echo "::error::Branch ${{ inputs.branch_name }} not found in SU2 repository"
+            echo "::error::Branch ${{ github.event.inputs.branch_name }} not found in SU2 repository"
             exit 1
           fi
           python meson.py build -Dwith-mpi=disabled -Denable-pywrapper=true --prefix=/usr/local
@@ -88,21 +168,14 @@ jobs:
           sudo ldconfig
           echo "PATH=/usr/local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Validate Inputs
-        run: |
-          if [ "${{ inputs.category }}" == "All" ] && [ "${{ inputs.case_code }}" != "All" ]; then
-            echo "::error::Cannot specify 'All' category with specific case_code"
-            exit 1
-          fi
-
       - name: Process All Validation Cases
-        if: ${{ inputs.category == 'All' && inputs.case_code == 'All' }}
+        if: ${{ github.event.inputs.category == 'All' && github.event.inputs.case_code == 'All' }}
         run: |
-          CATEGORY="${{ inputs.category }}"
-          CASE_CODE="${{ inputs.case_code }}"
-          TURB_MODEL="${{ inputs.turbulence_model }}"
-          CONFIG="${{ inputs.configuration }}"
-          AUTHOR="${{ inputs.author_name }}"
+          CATEGORY="${{ github.event.inputs.category }}"
+          CASE_CODE="${{ github.event.inputs.case_code }}"
+          TURB_MODEL="${{ github.event.inputs.turbulence_model }}"
+          CONFIG="${{ env.SANITIZED_CONFIGURATION }}"
+          AUTHOR="${{ env.SANITIZED_AUTHOR }}"
 
           # Create results directory
           mkdir -p results
@@ -233,13 +306,13 @@ jobs:
           done
 
       - name: Process Specific Category
-        if: ${{ inputs.category != 'All' && inputs.case_code == 'All' }}
+        if: ${{ github.event.inputs.category != 'All' && github.event.inputs.case_code == 'All' }}
         run: |
-          CATEGORY="${{ inputs.category }}"
-          CASE_CODE="${{ inputs.case_code }}"
-          TURB_MODEL="${{ inputs.turbulence_model }}"
-          CONFIG="${{ inputs.configuration }}"
-          AUTHOR="${{ inputs.author_name }}"
+          CATEGORY="${{ github.event.inputs.category }}"
+          CASE_CODE="${{ github.event.inputs.case_code }}"
+          TURB_MODEL="${{ github.event.inputs.turbulence_model }}"
+          CONFIG="${{ env.SANITIZED_CONFIGURATION }}"
+          AUTHOR="${{ env.SANITIZED_AUTHOR }}"
 
           # Create results directory
           mkdir -p results
@@ -360,13 +433,13 @@ jobs:
           done
 
       - name: Process Specific Validation Case
-        if: ${{ inputs.category != 'All' && inputs.case_code != 'All' }}
+        if: ${{ github.event.inputs.category != 'All' && github.event.inputs.case_code != 'All' }}
         run: |
-          CATEGORY="${{ inputs.category }}"
-          CASE_CODE="${{ inputs.case_code }}"
-          TURB_MODEL="${{ inputs.turbulence_model }}"
-          CONFIG="${{ inputs.configuration }}"
-          AUTHOR="${{ inputs.author_name }}"
+          CATEGORY="${{ github.event.inputs.category }}"
+          CASE_CODE="${{ github.event.inputs.case_code }}"
+          TURB_MODEL="${{ github.event.inputs.turbulence_model }}"
+          CONFIG="${{ env.SANITIZED_CONFIGURATION }}"
+          AUTHOR="${{ env.SANITIZED_AUTHOR }}"
 
           # Create results directory
           mkdir -p results
@@ -476,7 +549,7 @@ jobs:
       - name: Upload Results as Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: "ValidationCases_${{ inputs.author_name }}"
+          name: "ValidationCases_${{ env.SANITIZED_AUTHOR }}"
           path: results/
           retention-days: 7
 
@@ -484,7 +557,7 @@ jobs:
         if: success()
         run: |
           # Clone and checkout existing branch if it exists, or create new
-          BRANCH_NAME="ValidationCases_${{inputs.branch_name}}_${{ inputs.author_name }}"
+          BRANCH_NAME="ValidationCases_${{ github.event.inputs.branch_name }}_${{ env.SANITIZED_AUTHOR }}"
           git clone --branch "$BRANCH_NAME" --single-branch https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website || \
           git clone https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/HarshM0210/Results.git website
           cd website
@@ -501,7 +574,7 @@ jobs:
           fi
 
           # Create directory structure in the website repo
-          if [ "${{ inputs.category }}" = "All" ] && [ "${{ inputs.case_code }}" = "All" ]; then
+          if [ "${{ github.event.inputs.category }}" = "All" ] && [ "${{ github.event.inputs.case_code }}" = "All" ]; then
             BASE_PATH="../ValidationCases"
             for category_dir in "$BASE_PATH"/*/; do
                 if [ -d "$category_dir" ] && [[ "$(basename "$category_dir")" != .* ]]; then
@@ -516,8 +589,8 @@ jobs:
             done    
           fi
 
-          if [ "${{ inputs.category }}" != "All" ] && [ "${{ inputs.case_code }}" = "All" ]; then
-            BASE_PATH="../ValidationCases/${{ inputs.category }}"
+          if [ "${{ github.event.inputs.category }}" != "All" ] && [ "${{ github.event.inputs.case_code }}" = "All" ]; then
+            BASE_PATH="../ValidationCases/${{ github.event.inputs.category }}"
             for case_dir in "$BASE_PATH"/*/; do
               if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
                   case_name=$(basename "$case_dir")
@@ -526,8 +599,8 @@ jobs:
             done
           fi
 
-          if [ "${{ inputs.category }}" != "All" ] && [ "${{ inputs.case_code }}" != "All" ]; then
-            mkdir -p "vandv_files/${{ inputs.case_code }}"
+          if [ "${{ github.event.inputs.category }}" != "All" ] && [ "${{ github.event.inputs.case_code }}" != "All" ]; then
+            mkdir -p "vandv_files/${{ github.event.inputs.case_code }}"
           fi
             
           # Copy plot folders
@@ -574,4 +647,4 @@ jobs:
       - name: Summary
         run: |
           echo "SU2 Validation Pipeline Completed Successfully!"
-          echo "Author: ${{ inputs.author_name }}"
+          echo "Author: ${{ env.SANITIZED_AUTHOR }}"
