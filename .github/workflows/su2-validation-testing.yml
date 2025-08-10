@@ -181,7 +181,7 @@ jobs:
                         done
                       else
                         download_case_files "$cat_name" "$case_name" "$TURB_MODEL" "$CONFIG"
-                      done
+                      fi
                     fi
                   fi  
                 done
@@ -206,7 +206,7 @@ jobs:
                         done
                       else
                         download_case_files "$CATEGORY" "$case_name" "$model" "$CONFIG"
-                      done
+                      fi
                     done
                   else
                     if [ "$CONFIG" = "All" ]; then
@@ -219,7 +219,7 @@ jobs:
                       done
                     else
                       download_case_files "$CATEGORY" "$case_name" "$TURB_MODEL" "$CONFIG"
-                    done
+                    fi
                   fi
                 fi  
               done
@@ -236,7 +236,7 @@ jobs:
                     done
                   else
                     download_case_files "$CATEGORY" "$CASE_CODE" "$model" "$CONFIG"
-                  done
+                  fi
                 done
               else
                 if [ "$CONFIG" = "All" ]; then
@@ -246,10 +246,10 @@ jobs:
                       config=$(basename "$config_dir")
                       download_case_files "$CATEGORY" "$CASE_CODE" "$TURB_MODEL" "$config"
                     fi
-                    done
+                  done
                 else
                   download_case_files "$CATEGORY" "$CASE_CODE" "$TURB_MODEL" "$CONFIG"
-                done
+                fi
               fi
             fi
           fi
