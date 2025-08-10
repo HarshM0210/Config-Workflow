@@ -279,12 +279,19 @@ jobs:
         run: |
           git clone https://github.com/su2code/SU2.git
           cd SU2
-          if git show-ref --quiet refs/remotes/origin/${{ github.event.inputs.branch_name }}; then
-            git checkout -b ${{ github.event.inputs.branch_name }} origin/${{ github.event.inputs.branch_name }}
-          else
+
+          # Check branch exists
+          if ! git show-ref --quiet refs/remotes/origin/${{ github.event.inputs.branch_name }}; then
             echo "::error::Branch ${{ github.event.inputs.branch_name }} not found in SU2 repository"
             exit 1
           fi
+
+          if [ "${{ github.event.inputs.branch_name }}" = "master" ]; then
+            git reset --hard origin/master
+          else
+            git checkout -b ${{ github.event.inputs.branch_name }} origin/${{ github.event.inputs.branch_name }}
+          fi
+
           python meson.py build -Dwith-mpi=disabled -Denable-pywrapper=true --prefix=/usr/local
           ninja -C build
           sudo ninja -C build install
