@@ -95,10 +95,164 @@ jobs:
         with:
           path: main-repo
 
-      - name: Download Mesh And Restart Files From Google Drive
+      #- name: Download All Mesh And Restart Files From Google Drive
+      #  run: |
+      #    pip install gdown
+      #    gdown --folder https://drive.google.com/drive/folders/1z6kSNo4Y62idDN3zTWsugMJhOEdpLt2r?usp=sharing -O turbmodels --fuzzy
+
+      - name: Download Required Mesh And Restart Files
         run: |
-          pip install gdown
-          gdown --folder https://drive.google.com/drive/folders/1z6kSNo4Y62idDN3zTWsugMJhOEdpLt2r?usp=sharing -O turbmodels --fuzzy
+          pip install gdown jq
+          mkdir -p turbmodels/Mesh_Files turbmodels/Restart_Files
+
+          CATEGORY="${{ github.event.inputs.category }}"
+          CASE_CODE="${{ github.event.inputs.case_code }}"
+          TURB_MODEL="${{ github.event.inputs.turbulence_model }}"
+          CONFIG="${{ env.SANITIZED_CONFIGURATION }}"
+
+          # Function to download files for a specific case
+          download_case_files() {
+            local cat_name=$1
+            local case_name=$2
+            local model=$3
+            local config=$4
+
+            echo "Downloading files for $cat_name/$case_name/$model/$config"
+            
+            # Create directories
+            mkdir -p "turbmodels/Mesh_Files/$cat_name/$case_name"
+            mkdir -p "turbmodels/Restart_Files/$cat_name/$case_name/$model/$config"
+            
+            # Download mesh files
+            mesh_files=$(jq -r ".\"$cat_name\".\"$case_name\".mesh_files | to_entries[] | \"\(.key) \(.value)\"" main-repo/file_mapping.json)
+            while IFS=' ' read -r resolution file_id; do
+              if [ "$file_id" != "REPLACE_WITH_ACTUAL_FILE_ID" ] && [ -n "$file_id" ]; then
+                echo "Downloading mesh file for resolution: $resolution"
+                mkdir -p "turbmodels/Mesh_Files/$cat_name/$case_name/$resolution"
+                gdown "$file_id" -O "turbmodels/Mesh_Files/$cat_name/$case_name/$resolution/mesh.su2"
+              fi
+            done <<< "$mesh_files"
+            
+            # Download restart files
+            restart_files=$(jq -r ".\"$cat_name\".\"$case_name\".\"$model\".\"$config\".restart_files | to_entries[] | \"\(.key) \(.value)\"" main-repo/file_mapping.json)
+            while IFS=' ' read -r resolution file_id; do
+              if [ "$file_id" != "REPLACE_WITH_ACTUAL_FILE_ID" ] && [ -n "$file_id" ]; then
+                echo "Downloading restart file for resolution: $resolution"
+                mkdir -p "turbmodels/Restart_Files/$cat_name/$case_name/$model/$config/$resolution"
+                gdown "$file_id" -O "turbmodels/Restart_Files/$cat_name/$case_name/$model/$config/$resolution/restart.dat"
+              fi
+            done <<< "$restart_files"
+          }
+
+          # Download based on user selection
+          if [ "$CATEGORY" = "All" ] && [ "$CASE_CODE" = "All" ]; then
+            # Download all files
+
+            BASE_PATH_MAIN="main-repo/ValidationCases"
+            for category_dir in "$BASE_PATH_MAIN"/*/; do
+              if [ -d "$category_dir" ] && [[ "$(basename "$category_dir")" != .* ]]; then
+                cat_name=$(basename "$category_dir")
+                BASE_PATH="main-repo/ValidationCases/$cat_name"
+                for case_dir in "$BASE_PATH"/*/; do
+                  if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
+                    case_name=$(basename "$case_dir")
+                    if [ "$TURB_MODEL" = "All" ]; then
+                      for model in "SA" "SST"; do
+                        if [ "$CONFIG" = "All" ]; then
+                          BASE_PATH_CONFIG="main-repo/ValidationCases/$cat_name/$case_name/$model"
+                          for config_dir in "$BASE_PATH_CONFIG"/Configuration*; do
+                            if [ -d "$config_dir" ]; then
+                              config=$(basename "$config_dir")
+                              download_case_files "$cat_name" "$case_name" "$model" "$config"
+                            fi  
+                          done
+                        else
+                          download_case_files "$cat_name" "$case_name" "$model" "$CONFIG"
+                        fi
+                      done
+                    else
+                      if [ "$CONFIG" = "All" ]; then
+                        BASE_PATH_CONFIG="main-repo/ValidationCases/$cat_name/$case_name/$TURB_MODEL"
+                        for config_dir in "$BASE_PATH_CONFIG"/Configuration*; do
+                          if [ -d "$config_dir" ]; then
+                            config=$(basename "$config_dir")
+                            download_case_files "$cat_name" "$case_name" "$TURB_MODEL" "$config"
+                          fi  
+                        done
+                      else
+                        download_case_files "$cat_name" "$case_name" "$TURB_MODEL" "$CONFIG"
+                      done
+                    fi
+                  fi  
+                done
+              fi  
+            done
+          else
+            # Download specific files
+            if [ "$CASE_CODE" = "All" ]; then
+              BASE_PATH="main-repo/ValidationCases/$CATEGORY"
+              for case_dir in "$BASE_PATH"/*/; do
+                if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
+                  case_name=$(basename "$case_dir")
+                  if [ "$TURB_MODEL" = "All" ]; then
+                    for model in "SA" "SST"; do
+                      if [ "$CONFIG" = "All" ]; then
+                        BASE_PATH_CONFIG="main-repo/ValidationCases/$CATEGORY/$case_name/$model"
+                        for config_dir in "$BASE_PATH_CONFIG"/Configuration*; do
+                          if [ -d "$config_dir" ]; then
+                            config=$(basename "$config_dir")
+                            download_case_files "$CATEGORY" "$case_name" "$model" "$config"
+                          fi  
+                        done
+                      else
+                        download_case_files "$CATEGORY" "$case_name" "$model" "$CONFIG"
+                      done
+                    done
+                  else
+                    if [ "$CONFIG" = "All" ]; then
+                      BASE_PATH_CONFIG="main-repo/ValidationCases/$CATEGORY/$case_name/$TURB_MODEL"
+                      for config_dir in "$BASE_PATH_CONFIG"/Configuration*; do
+                        if [ -d "$config_dir" ]; then
+                          config=$(basename "$config_dir")
+                          download_case_files "$CATEGORY" "$case_name" "$TURB_MODEL" "$config"
+                        fi  
+                      done
+                    else
+                      download_case_files "$CATEGORY" "$case_name" "$TURB_MODEL" "$CONFIG"
+                    done
+                  fi
+                fi  
+              done
+            else
+              if [ "$TURB_MODEL" = "All" ]; then
+                for model in "SA" "SST"; do
+                  if [ "$CONFIG" = "All" ]; then
+                    BASE_PATH_CONFIG="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$model"
+                    for config_dir in "$BASE_PATH_CONFIG"/Configuration*; do
+                      if [ -d "$config_dir" ]; then
+                        config=$(basename "$config_dir")
+                        download_case_files "$CATEGORY" "$CASE_CODE" "$model" "$config"
+                      fi
+                    done
+                  else
+                    download_case_files "$CATEGORY" "$CASE_CODE" "$model" "$CONFIG"
+                  done
+                done
+              else
+                if [ "$CONFIG" = "All" ]; then
+                  BASE_PATH_CONFIG="main-repo/ValidationCases/$CATEGORY/$CASE_CODE/$TURB_MODEL"
+                  for config_dir in "$BASE_PATH_CONFIG"/Configuration*; do
+                    if [ -d "$config_dir" ]; then
+                      config=$(basename "$config_dir")
+                      download_case_files "$CATEGORY" "$CASE_CODE" "$TURB_MODEL" "$config"
+                    fi
+                    done
+                else
+                  download_case_files "$CATEGORY" "$CASE_CODE" "$TURB_MODEL" "$CONFIG"
+                done
+              fi
+            fi
+          fi
 
       - name: Set Up Python 3.11
         uses: actions/setup-python@v4
