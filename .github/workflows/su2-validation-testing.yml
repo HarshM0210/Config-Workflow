@@ -16,7 +16,6 @@ on:
         type: choice
         options:
           - Basic
-          - Extended
           - All
       case_code:
         description: "Validation Case Code (e.g. 2DML)"
@@ -702,46 +701,19 @@ jobs:
             git pull origin "$BRANCH_NAME" --rebase
           fi
 
-          # Create directory structure in the website repo
-          if [ "${{ github.event.inputs.category }}" = "All" ] && [ "${{ github.event.inputs.case_code }}" = "All" ]; then
-            BASE_PATH="../ValidationCases"
-            for category_dir in "$BASE_PATH"/*/; do
-                if [ -d "$category_dir" ] && [[ "$(basename "$category_dir")" != .* ]]; then
-                    for case_dir in "$category_dir"/*/; do
-                        if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
-                            case_name=$(basename "$case_dir")
-                            # Create directory in results/vandv_files/
-                            mkdir -p "vandv_files/$case_name"
-                        fi
-                    done
-                fi
-            done    
-          fi
-
-          if [ "${{ github.event.inputs.category }}" != "All" ] && [ "${{ github.event.inputs.case_code }}" = "All" ]; then
-            BASE_PATH="../ValidationCases/${{ github.event.inputs.category }}"
-            for case_dir in "$BASE_PATH"/*/; do
-              if [ -d "$case_dir" ] && [[ "$(basename "$case_dir")" != .* ]]; then
-                  case_name=$(basename "$case_dir")
-                  mkdir -p "vandv_files/$case_name"
-              fi
-            done
-          fi
-
-          if [ "${{ github.event.inputs.category }}" != "All" ] && [ "${{ github.event.inputs.case_code }}" != "All" ]; then
-            mkdir -p "vandv_files/${{ github.event.inputs.case_code }}"
-          fi
-            
-          # Copy plot folders
           find ../results -name "plots" -type d | while read plot_dir; do
             config_name=$(basename $(dirname "${plot_dir%/}"))
             turb_name=$(basename $(dirname $(dirname "${plot_dir%/}")))
             case_name=$(basename $(dirname $(dirname $(dirname "${plot_dir%/}"))))
             target_dir="vandv_files/${case_name}/${case_name}_${turb_name}_${config_name}"
+            
+            # Remove existing directory if present
             if [ -d "$target_dir" ]; then
-              echo "Overwriting existing results at $target_dir"
-              rm -rf "$target_dir"
+                echo "Overwriting existing results at $target_dir"
+                rm -rf "$target_dir"
             fi
+            
+            mkdir -p "$(dirname "$target_dir")"
             cp -r "$plot_dir" "$target_dir"
           done
 
