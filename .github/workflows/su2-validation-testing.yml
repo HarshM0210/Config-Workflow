@@ -6,10 +6,8 @@ on:
       branch_name:
         description: "SU2 Branch To Check Out (e.g. master, develop)"
         required: true
-        type: choice
-        options:
-          - master
-          - develop
+        type: string
+
       category:
         description: "Validation Case Category"
         required: true
