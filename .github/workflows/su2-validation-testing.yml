@@ -276,7 +276,7 @@ jobs:
           git clone https://github.com/su2code/SU2.git
           cd SU2
 
-          # Check branch exists
+          # Check if branch exists
           if ! git show-ref --quiet refs/remotes/origin/${{ github.event.inputs.branch_name }}; then
             echo "::error::Branch ${{ github.event.inputs.branch_name }} not found in SU2 repository"
             exit 1
